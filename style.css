@@ -8,10 +8,18 @@
     --text-main: #ffffff;
     --text-muted: #b3b3b3;
     --sidebar-width: 250px;
-    --player-height: 70px; /* Default for mobile first layout */
+    --player-height: 70px; 
 }
 
-* { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+/* FIX: Removes the blue tap highlight on mobile devices */
+* { 
+    margin: 0; 
+    padding: 0; 
+    box-sizing: border-box; 
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+    -webkit-tap-highlight-color: transparent; 
+}
+
 body { background-color: var(--bg-base); color: var(--text-main); overflow: hidden; }
 #bg-canvas { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; z-index: -1; }
 
@@ -19,41 +27,11 @@ body { background-color: var(--bg-base); color: var(--text-main); overflow: hidd
 .overlay.active { display: block; }
 .app-container { display: flex; height: calc(100vh - var(--player-height)); position: relative; }
 
-/* =========================================
-   MODAL POPUP STYLES (WITH ANIMATION)
-   ========================================= */
-.modal-overlay {
-    display: none;
-    position: fixed;
-    top: 0; left: 0; width: 100vw; height: 100vh;
-    background: rgba(0, 0, 0, 0.8);
-    backdrop-filter: blur(5px);
-    z-index: 400; /* Above full screen player */
-    align-items: center; justify-content: center;
-    opacity: 0;
-    transition: opacity 0.3s ease;
-}
-
+/* MODAL POPUP STYLES */
+.modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0, 0, 0, 0.8); backdrop-filter: blur(5px); z-index: 400; align-items: center; justify-content: center; opacity: 0; transition: opacity 0.3s ease; }
 .modal-overlay.active { display: flex; opacity: 1; }
-
-.modal-content {
-    background-color: #181818;
-    padding: 30px;
-    border-radius: 12px;
-    width: 90%; max-width: 350px;
-    position: relative; text-align: center;
-    box-shadow: 0 10px 30px rgba(0,0,0,0.5);
-    border: 1px solid #282828;
-    transform: scale(0.7);
-    opacity: 0;
-    transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-}
-
-.modal-overlay.active .modal-content {
-    transform: scale(1);
-    opacity: 1;
-}
-
+.modal-content { background-color: #181818; padding: 30px; border-radius: 12px; width: 90%; max-width: 350px; position: relative; text-align: center; box-shadow: 0 10px 30px rgba(0,0,0,0.5); border: 1px solid #282828; transform: scale(0.7); opacity: 0; transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
+.modal-overlay.active .modal-content { transform: scale(1); opacity: 1; }
 .close-modal-btn { position: absolute; top: 15px; right: 15px; background: none; border: none; color: var(--text-muted); font-size: 1.2rem; cursor: pointer; }
 .modal-state { display: flex; flex-direction: column; align-items: center; gap: 15px; }
 .modal-icon { font-size: 3rem; color: var(--emerald); }
@@ -64,9 +42,7 @@ body { background-color: var(--bg-base); color: var(--text-main); overflow: hidd
 .logout-btn { background-color: transparent; border: 1px solid #ff4d4d; color: #ff4d4d; }
 .modal-profile-img { width: 80px; height: 80px; border-radius: 50%; object-fit: cover; border: 2px solid var(--emerald); }
 
-/* =========================================
-   SIDEBAR & MAIN CONTENT
-   ========================================= */
+/* SIDEBAR & MAIN CONTENT */
 .sidebar { width: var(--sidebar-width); background-color: rgba(0, 0, 0, 0.95); padding: 24px 12px; display: flex; flex-direction: column; gap: 20px; height: 100%; transition: transform 0.3s ease; z-index: 100; position: fixed; left: 0; top: 0; transform: translateX(-100%); }
 .sidebar.open { transform: translateX(0); }
 .close-btn { display: block; background: none; border: none; color: var(--text-main); font-size: 1.5rem; position: absolute; top: 20px; right: 20px; cursor: pointer; }
@@ -86,16 +62,23 @@ body { background-color: var(--bg-base); color: var(--text-main); overflow: hidd
 .avatar-circle { width: 32px; height: 32px; border-radius: 50%; background-color: #333; display: flex; align-items: center; justify-content: center; overflow: hidden; }
 .avatar-circle img { width: 100%; height: 100%; object-fit: cover; }
 
+/* DYNAMIC VIEWS & GRID */
 .section-title { font-size: 1.5rem; margin-bottom: 20px; }
 .content-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 16px; }
-.track-card { background-color: #181818; padding: 12px; border-radius: 8px; cursor: pointer; display: flex; flex-direction: column; gap: 10px; }
+.track-card { background-color: #181818; padding: 12px; border-radius: 8px; cursor: pointer; display: flex; flex-direction: column; gap: 10px; position: relative; }
+.track-card:hover { background-color: #282828; }
 .track-image-placeholder { width: 100%; aspect-ratio: 1; background-color: #333; border-radius: 6px; display: flex; align-items: center; justify-content: center; font-size: 2.5rem; color: #555; }
-.track-card h3 { font-size: 0.9rem; color: var(--text-main); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.track-card h3 { font-size: 0.9rem; color: var(--text-main); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-right: 25px; }
 .track-card p { font-size: 0.8rem; color: var(--text-muted); }
+.card-like-btn { position: absolute; bottom: 12px; right: 12px; background: none; border: none; color: var(--text-muted); font-size: 1.1rem; cursor: pointer; z-index: 2; padding: 5px; }
 
-/* =========================================
-   BOTTOM MINI PLAYER
-   ========================================= */
+/* SEARCH BAR */
+.search-container { margin-bottom: 25px; position: relative; }
+.search-container i { position: absolute; left: 16px; top: 50%; transform: translateY(-50%); color: var(--text-muted); font-size: 1.2rem; }
+.search-input { width: 100%; max-width: 400px; padding: 14px 14px 14px 45px; border-radius: 25px; border: none; background-color: #242424; color: white; font-size: 1rem; outline: none; border: 1px solid transparent; transition: border 0.3s; }
+.search-input:focus { border-color: var(--emerald); background-color: #2a2a2a; }
+
+/* BOTTOM MINI PLAYER */
 .music-player { position: fixed; bottom: 0; width: 100%; height: var(--player-height); background-color: #181818; border-top: 1px solid #282828; display: flex; flex-direction: column; z-index: 10; justify-content: center; padding: 0; cursor: pointer; }
 .progress-container { position: absolute; top: -8px; left: 0; width: 100%; padding: 0; }
 input[type="range"] { -webkit-appearance: none; width: 100%; height: 4px; background: #4d4d4d; border-radius: 2px; outline: none; }
@@ -107,18 +90,15 @@ input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 12p
 .track-info { display: flex; flex-direction: column; justify-content: center; overflow: hidden; }
 .track-info h4 { font-size: 0.9rem; color: var(--text-main); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .track-info p { font-size: 0.75rem; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.like-btn { background: none; border: none; color: var(--text-muted); font-size: 1rem; padding: 10px; }
+.like-btn { background: none; border: none; color: var(--text-muted); font-size: 1rem; padding: 10px; cursor: pointer; }
 .player-controls-container { width: 35%; display: flex; justify-content: flex-end; align-items: center; }
 .control-buttons { display: flex; gap: 12px; }
 .control-buttons button { background: none; border: none; color: var(--text-main); font-size: 1.8rem; padding: 10px; }
-.player-actions { display: none; } /* Hidden on mobile mini player */
+.player-actions { display: none; } 
 
-/* =========================================
-   FULL SCREEN MOBILE PLAYER
-   ========================================= */
+/* FULL SCREEN MOBILE PLAYER */
 .fs-player {
-    position: fixed; top: 100vh; /* Hidden initially */
-    left: 0; width: 100vw; height: 100vh;
+    position: fixed; top: 100vh; left: 0; width: 100vw; height: 100vh;
     background: linear-gradient(180deg, #181818 0%, #000000 100%);
     z-index: 300; display: flex; flex-direction: column; padding: 24px;
     transition: top 0.4s cubic-bezier(0.25, 0.46, 0.45, 0.94);
