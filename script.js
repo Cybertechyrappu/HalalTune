@@ -72,8 +72,16 @@ document.querySelectorAll('.auth-action, .auth-required').forEach(el => {
 
 document.getElementById('google-login-btn').addEventListener('click', () => {
     const provider = new firebase.auth.GoogleAuthProvider();
-    auth.signInWithPopup(provider).catch(err => alert("Login Failed: " + err.message));
+    // Redirects the whole page to Google, which mobile browsers allow
+    auth.signInWithRedirect(provider);
 });
+
+// Optional but recommended: Catch any errors when the page redirects back
+auth.getRedirectResult().catch(err => {
+    console.error("Auth Error: ", err);
+    alert("Login Error: " + err.message);
+});
+
 
 document.getElementById('logout-btn').addEventListener('click', () => {
     auth.signOut().then(() => authModal.classList.remove('active'));
