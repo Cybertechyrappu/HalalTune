@@ -31,7 +31,6 @@ let isRepeat = false;
 let likedSongIds = new Set();
 let currentTab = 'all'; 
 
-// Generate Local UID for Anonymous Listener Tracking
 let localUserId = localStorage.getItem('halaltune_uid');
 if (!localUserId) {
     localUserId = 'anon_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
@@ -39,7 +38,7 @@ if (!localUserId) {
 }
 
 // ==========================================
-// 2. AUTHENTICATION (GOOGLE) & ROUTING
+// 2. AUTHENTICATION & NATIVE BRIDGE ROUTING
 // ==========================================
 const introScreen = document.getElementById('intro-screen');
 const authScreen = document.getElementById('auth-screen');
@@ -92,20 +91,31 @@ document.getElementById('get-started-btn').addEventListener('click', () => {
     }});
 });
 
-// Google Authentication
+// UPGRADED GOOGLE AUTHENTICATION LOGIC (Checks for Android App)
 document.getElementById('google-login-btn').addEventListener('click', () => {
-    const provider = new firebase.auth.GoogleAuthProvider();
-    auth.signInWithPopup(provider).then((result) => {
-        console.log("Successfully logged in as: ", result.user.displayName);
-    }).catch((error) => {
-        console.error("Google Sign-In Error:", error);
-        if (error.message.includes('disallowed_useragent') || error.code === 'auth/web-storage-unsupported') {
-            alert("⚠️ GOOGLE SECURITY BLOCK ⚠️\n\nGoogle blocks logins inside code editors like Spck Preview.\n\nPlease open your standard Chrome browser and go to your localhost URL, or push to GitHub to test logging in!");
-        } else {
+    // If running inside our Android App, ask Android to show the native account picker
+    if (window.AndroidBridge && window.AndroidBridge.loginWithGoogle) {
+        window.AndroidBridge.loginWithGoogle();
+    } else {
+        // If running in a standard Chrome Browser, use standard popup
+        const provider = new firebase.auth.GoogleAuthProvider();
+        auth.signInWithPopup(provider).catch((error) => {
+            console.error("Google Sign-In Error:", error);
             alert("Login Failed: " + error.message);
-        }
-    });
+        });
+    }
 });
+
+// This function is triggered directly by the Android Java code after selecting an account
+window.firebaseNativeLogin = function(idToken) {
+    const credential = firebase.auth.GoogleAuthProvider.credential(idToken);
+    auth.signInWithCredential(credential).then((result) => {
+        console.log("Logged in via Native Android bridge!");
+    }).catch((error) => {
+        console.error("Firebase Native Auth Error:", error);
+        alert("Authentication Failed: " + error.message);
+    });
+};
 
 const logout = () => auth.signOut();
 document.getElementById('logout-btn-desktop')?.addEventListener('click', logout);
