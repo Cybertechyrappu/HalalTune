@@ -35,28 +35,12 @@
     <div id="auth-screen" class="fullscreen-view" style="display: none; opacity: 0;">
         <div class="auth-box">
             <img src="icon.png" alt="HalalTune Logo" class="filtered-icon auth-logo" onerror="this.src='https://via.placeholder.com/60/ffffff/000000?text=HT'">
+            <h2>Welcome</h2>
+            <p>Sign in to save your playlists and liked songs across all your devices.</p>
             
-            <div id="phone-step">
-                <h2>Welcome Back</h2>
-                <p>Enter your mobile number to continue.</p>
-                <div class="yt-input-group">
-                    <span class="country-code">+91</span>
-                    <input type="tel" id="phone-input" placeholder="Mobile number" autocomplete="tel">
-                </div>
-                <button id="send-otp-btn" class="yt-primary-btn">Send OTP</button>
-            </div>
-
-            <div id="otp-step" style="display: none;">
-                <h2>Verify Code</h2>
-                <p>Enter the 6-digit code sent to your phone.</p>
-                <div class="yt-input-group">
-                    <input type="number" id="otp-input" placeholder="000000" autocomplete="one-time-code">
-                </div>
-                <button id="verify-otp-btn" class="yt-primary-btn">Verify & Enter</button>
-                <button id="back-to-phone-btn" class="yt-text-btn">Wrong number? Go back.</button>
-            </div>
-            
-            <div id="recaptcha-container"></div>
+            <button id="google-login-btn" class="yt-primary-btn google-btn">
+                <i class="fa-brands fa-google"></i> Continue with Google
+            </button>
         </div>
     </div>
 
@@ -105,6 +89,17 @@
 
         </main>
     </div>
+
+    <nav class="yt-bottom-nav">
+        <button class="yt-nav-item active" data-tab="all">
+            <i class="fa-solid fa-house"></i>
+            <span>Home</span>
+        </button>
+        <button class="yt-nav-item" data-tab="liked">
+            <i class="fa-solid fa-heart"></i>
+            <span>Liked</span>
+        </button>
+    </nav>
 
     <footer class="yt-bottom-player" id="mini-player">
         <div class="yt-player-progress-container">
