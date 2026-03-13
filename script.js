@@ -59,7 +59,6 @@ auth.onAuthStateChanged(user => {
             likedSongIds.clear(); 
             snap.forEach(doc => likedSongIds.add(doc.id));
             updateGlobalLikeButtons();
-            
             if(currentTab === 'liked') renderList(getFilteredTracks());
             else {
                 document.querySelectorAll('.list-like-btn').forEach(btn => {
@@ -114,7 +113,7 @@ document.getElementById('logout-btn-desktop')?.addEventListener('click', logout)
 document.getElementById('logout-btn-mobile')?.addEventListener('click', logout);
 
 // ==========================================
-// 3. FETCH, FILTER & RENDER LIST LOGIC
+// 3. FETCH, FILTER & RENDER LIST
 // ==========================================
 const listContainer = document.getElementById('track-list');
 const searchInput = document.getElementById('search-input');
@@ -132,14 +131,14 @@ async function fetchAllTracks() {
 
 function handleTabSwitch(tabName) {
     currentTab = tabName;
-    document.querySelectorAll('.yt-nav-btn, .yt-chip').forEach(btn => {
+    document.querySelectorAll('.yt-nav-btn, .yt-chip, .yt-nav-item').forEach(btn => {
         if(btn.getAttribute('data-tab') === tabName) btn.classList.add('active');
         else btn.classList.remove('active');
     });
     renderList(getFilteredTracks());
 }
 
-document.querySelectorAll('.yt-nav-btn, .yt-chip').forEach(btn => {
+document.querySelectorAll('.yt-nav-btn, .yt-chip, .yt-nav-item').forEach(btn => {
     if(btn.id && btn.id.includes('logout')) return;
     btn.addEventListener('click', () => handleTabSwitch(btn.getAttribute('data-tab')));
 });
@@ -173,18 +172,10 @@ function renderList(trackArray) {
         const artHtml = track.coverArt ? `<img src="${track.coverArt}">` : `<i class="fa-solid fa-music"></i>`;
 
         item.innerHTML = `
-            <div class="yt-list-art-wrapper">
-                ${artHtml}
-                <div class="yt-list-play-overlay"><i class="fa-solid fa-play"></i></div>
-            </div>
-            <div class="yt-list-meta">
-                <h3>${track.title}</h3>
-                <p>${track.artist}</p>
-            </div>
+            <div class="yt-list-art-wrapper">${artHtml}<div class="yt-list-play-overlay"><i class="fa-solid fa-play"></i></div></div>
+            <div class="yt-list-meta"><h3>${track.title}</h3><p>${track.artist}</p></div>
             <div class="yt-list-actions">
-                <button class="list-like-btn ${isLiked ? 'liked' : ''}" data-id="${track.id}">
-                    <i class="${heartClass} fa-heart"></i>
-                </button>
+                <button class="list-like-btn ${isLiked ? 'liked' : ''}" data-id="${track.id}"><i class="${heartClass} fa-heart"></i></button>
             </div>
         `;
         
@@ -240,7 +231,18 @@ document.getElementById('fs-like-btn').addEventListener('click', () => toggleLik
 // ==========================================
 const audio = document.getElementById('audio-element');
 
-// This explicitly pushes Time and Play State to Android App
+// MASTER CONTROLLER FOR ANDROID BRIDGE
+window.nativeControl = function(action, value) {
+    if (!audio.src) return;
+    switch(action) {
+        case 'PLAY': audio.play(); setPlayState(true); break;
+        case 'PAUSE': audio.pause(); setPlayState(false); break;
+        case 'NEXT': playNext(); break;
+        case 'PREV': playPrev(); break;
+        case 'SEEK': audio.currentTime = value; break;
+    }
+};
+
 window.updateAndroidMedia = function() {
     if (window.AndroidBridge && window.AndroidBridge.updateMediaNotification && currentQueue[currentTrackIndex]) {
         const track = currentQueue[currentTrackIndex];
@@ -251,12 +253,6 @@ window.updateAndroidMedia = function() {
     }
 };
 
-// Called by Android App when user scrubs the lockscreen seekbar
-window.nativeSeek = function(seconds) {
-    audio.currentTime = seconds;
-};
-
-// Update Android App when metadata (duration) successfully loads or when seeking finishes
 audio.addEventListener('loadedmetadata', window.updateAndroidMedia);
 audio.addEventListener('seeked', window.updateAndroidMedia);
 
@@ -282,8 +278,18 @@ function playTrack() {
     fetchLyrics(track.title, track.artist);
     renderRelated(track);
     
-    // Only setup Web media session if NOT running inside Android app (prevent conflicts)
-    if (!window.AndroidBridge) setupMediaSession(track);
+    // Only use Web MediaSession if NOT in the Android App (prevents conflicts)
+    if (!window.AndroidBridge && 'mediaSession' in navigator) {
+        navigator.mediaSession.metadata = new MediaMetadata({
+            title: track.title, artist: track.artist, album: 'HalalTune',
+            artwork: [{ src: track.coverArt || 'icon.png', sizes: '512x512', type: 'image/png' }]
+        });
+        navigator.mediaSession.setActionHandler('play', () => { audio.play(); setPlayState(true); });
+        navigator.mediaSession.setActionHandler('pause', () => { audio.pause(); setPlayState(false); });
+        navigator.mediaSession.setActionHandler('previoustrack', () => playPrev());
+        navigator.mediaSession.setActionHandler('nexttrack', () => playNext());
+        navigator.mediaSession.setActionHandler('seekto', (details) => { audio.currentTime = details.seekTime; });
+    }
 
     const activeUid = auth.currentUser ? auth.currentUser.uid : localUserId;
     db.collection('songs').doc(track.id).update({
@@ -291,32 +297,6 @@ function playTrack() {
         listeners: firebase.firestore.FieldValue.arrayUnion(activeUid)
     }).catch(err => console.log(err));
 }
-
-function setupMediaSession(track) {
-    if ('mediaSession' in navigator) {
-        navigator.mediaSession.metadata = new MediaMetadata({
-            title: track.title, artist: track.artist, album: 'HalalTune',
-            artwork: [{ src: track.coverArt || 'icon.png', sizes: '512x512', type: 'image/png' }]
-        });
-        navigator.mediaSession.setActionHandler('play', () => { audio.play(); setPlayState(true); });
-        navigator.mediaSession.setActionHandler('pause', () => { audio.pause(); setPlayState(false); });
-        navigator.mediaSession.setActionHandler('previoustrack', () => window.playPrev());
-        navigator.mediaSession.setActionHandler('nexttrack', () => window.playNext());
-        navigator.mediaSession.setActionHandler('seekto', (details) => {
-            audio.currentTime = details.seekTime;
-            updatePositionState();
-        });
-    }
-}
-
-function updatePositionState() {
-    if (!window.AndroidBridge && 'mediaSession' in navigator && !isNaN(audio.duration)) {
-        navigator.mediaSession.setPositionState({ duration: audio.duration, playbackRate: audio.playbackRate, position: audio.currentTime });
-    }
-}
-audio.addEventListener('loadeddata', updatePositionState);
-audio.addEventListener('timeupdate', () => { if(!window.AndroidBridge) updatePositionState(); });
-
 
 // --- BUBBLE TABS LOGIC ---
 const fsArtView = document.getElementById('fs-artwork-view');
@@ -329,19 +309,23 @@ const viewRelated = document.getElementById('fs-related-view');
 bubbleBtns.forEach(btn => {
     btn.addEventListener('click', () => {
         const target = btn.getAttribute('data-target');
+        
         if(btn.classList.contains('active')) {
             btn.classList.remove('active');
             fsTabContentView.style.display = 'none';
             fsArtView.style.display = 'flex';
             return;
         }
+
         bubbleBtns.forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
+
         fsArtView.style.display = 'none';
         fsTabContentView.style.display = 'block';
         viewQueue.style.display = 'none';
         viewLyrics.style.display = 'none';
         viewRelated.style.display = 'none';
+
         if(target === 'queue') viewQueue.style.display = 'block';
         if(target === 'lyrics') viewLyrics.style.display = 'block';
         if(target === 'related') viewRelated.style.display = 'block';
@@ -409,27 +393,26 @@ function renderRelated(currentTrack) {
     });
 }
 
-// --- CONTROLS EXPOSED GLOBALLY FOR ANDROID SERVICE ---
-window.playNext = function() {
+function playNext() {
     if(currentQueue.length === 0) return;
     if(isShuffle) currentTrackIndex = Math.floor(Math.random() * currentQueue.length);
     else { currentTrackIndex++; if(currentTrackIndex >= currentQueue.length) currentTrackIndex = 0; }
     playTrack();
     renderList(getFilteredTracks()); 
-};
+}
 
-window.playPrev = function() {
+function playPrev() {
     if(currentQueue.length === 0) return;
     if(isShuffle) currentTrackIndex = Math.floor(Math.random() * currentQueue.length);
     else { currentTrackIndex--; if(currentTrackIndex < 0) currentTrackIndex = currentQueue.length - 1; }
     playTrack();
     renderList(getFilteredTracks());
-};
+}
 
-document.getElementById('fs-next-btn').addEventListener('click', window.playNext);
-document.getElementById('desk-next-btn')?.addEventListener('click', window.playNext);
-document.getElementById('fs-prev-btn').addEventListener('click', window.playPrev);
-document.getElementById('desk-prev-btn')?.addEventListener('click', window.playPrev);
+document.getElementById('fs-next-btn').addEventListener('click', playNext);
+document.getElementById('desk-next-btn')?.addEventListener('click', playNext);
+document.getElementById('fs-prev-btn').addEventListener('click', playPrev);
+document.getElementById('desk-prev-btn')?.addEventListener('click', playPrev);
 
 const shuffleBtn = document.getElementById('fs-shuffle-btn');
 shuffleBtn.addEventListener('click', () => {
@@ -450,7 +433,6 @@ function setPlayState(isPlaying) {
         if(isPlaying) icon.classList.replace('fa-play', 'fa-pause');
         else icon.classList.replace('fa-pause', 'fa-play');
     });
-    // Triggers notification UI update in Android App
     window.updateAndroidMedia();
 }
 
@@ -498,12 +480,9 @@ fsBar.addEventListener('input', handleSeek);
 
 audio.addEventListener('ended', () => {
     if(isRepeat) { audio.currentTime = 0; audio.play(); } 
-    else { window.playNext(); }
+    else { playNext(); }
 });
 
-// ==========================================
-// 5. 3-DOT MENU & DOWNLOAD LOGIC
-// ==========================================
 const optionsModal = document.getElementById('options-modal');
 document.getElementById('fs-menu-btn').addEventListener('click', () => {
     if(!currentQueue[currentTrackIndex]) return;
@@ -516,9 +495,7 @@ optionsModal.addEventListener('click', (e) => { if(e.target === optionsModal) op
 document.getElementById('opt-download-btn').addEventListener('click', () => {
     if(!currentQueue[currentTrackIndex]) return;
     const track = currentQueue[currentTrackIndex];
-    db.collection('songs').doc(track.id).update({
-        downloadCount: firebase.firestore.FieldValue.increment(1)
-    });
+    db.collection('songs').doc(track.id).update({ downloadCount: firebase.firestore.FieldValue.increment(1) });
     window.open(track.url, '_blank');
     optionsModal.style.display = 'none';
 });
@@ -534,9 +511,6 @@ document.getElementById('opt-share-btn').addEventListener('click', () => {
     optionsModal.style.display = 'none';
 });
 
-// ==========================================
-// 6. PLAYER SWIPE GESTURES
-// ==========================================
 const miniPlayer = document.getElementById('mini-player');
 const fsPlayer = document.getElementById('full-screen-player');
 const closeFsBtn = document.getElementById('close-fs-btn');
