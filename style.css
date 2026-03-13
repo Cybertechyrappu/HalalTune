@@ -52,7 +52,16 @@ body { background-color: var(--bg-base); color: var(--text-primary); overflow: h
 .yt-nav-btn.active { background: var(--bg-surface); color: var(--text-primary); }
 .yt-sidebar-bottom { padding-top: 20px; border-top: 1px solid var(--divider); }
 
-.yt-main-content { flex: 1; display: flex; flex-direction: column; background-color: var(--bg-base); position: relative; padding-bottom: var(--desktop-player-height); }
+/* --- MAIN CONTENT (SCROLL FIXES APPLIED HERE) --- */
+.yt-main-content { 
+    flex: 1; 
+    display: flex; 
+    flex-direction: column; 
+    background-color: var(--bg-base); 
+    position: relative; 
+    min-height: 0; /* Critical for Flexbox Scrolling */
+    overflow: hidden; /* Critical for Flexbox Scrolling */
+}
 
 .yt-topbar { display: flex; align-items: center; justify-content: space-between; padding: 15px 30px; background: var(--bg-base); z-index: 10; }
 .yt-mobile-brand { display: none; align-items: center; gap: 10px; }
@@ -67,7 +76,13 @@ body { background-color: var(--bg-base); color: var(--text-primary); overflow: h
 .yt-chip:hover { background: rgba(255,255,255,0.2); }
 .yt-chip.active { background: #ffffff; color: #000000; font-weight: 500; }
 
-.yt-content-area { flex: 1; overflow-y: auto; padding: 10px 30px; }
+.yt-content-area { 
+    flex: 1; 
+    overflow-y: auto; 
+    padding: 10px 30px calc(var(--desktop-player-height) + 20px) 30px; 
+    -webkit-overflow-scrolling: touch; 
+}
+
 .yt-track-list { display: flex; flex-direction: column; gap: 4px; }
 .yt-list-item { display: flex; align-items: center; padding: 8px 10px; border-radius: 4px; cursor: pointer; transition: background 0.2s; border-bottom: 1px solid transparent; }
 .yt-list-item:hover, .yt-list-item.active { background: var(--bg-hover); }
@@ -181,18 +196,20 @@ body { background-color: var(--bg-base); color: var(--text-primary); overflow: h
     .mobile-only { display: block !important; }
     
     .yt-sidebar { display: none; }
-    .yt-app-layout { flex-direction: column; height: 100vh; }
+    .yt-app-layout { flex-direction: column; height: 100vh; overflow: hidden; }
     
-    .yt-main-content { padding-bottom: calc(var(--mobile-player-height) + 15px); padding-top: 0; }
+    .yt-main-content { padding-bottom: 0; padding-top: 0; min-height: 0; overflow: hidden; }
     
     .yt-topbar { padding: 15px 20px; }
     .yt-search-container { display: none; } 
     .yt-mobile-brand { display: flex; }
     
     .yt-chips-container { padding: 0 20px 15px 20px; }
-    .yt-content-area { padding: 5px 15px; }
     
-    /* Floating Mini Player at the very bottom */
+    /* SCROLL FIX APPLIED HERE */
+    .yt-content-area { padding: 5px 15px calc(var(--mobile-player-height) + 25px) 15px; }
+    
+    /* Floating Mini Player */
     .yt-bottom-player { bottom: 10px; width: calc(100% - 20px); left: 10px; height: var(--mobile-player-height); border-radius: 8px; background: #212121; border-top: none; }
     .yt-player-progress-container { top: auto; bottom: 0; height: 2px; }
     .yt-player-content { padding: 0 15px; }
