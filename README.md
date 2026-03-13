@@ -52,9 +52,8 @@ Built with a premium **Pitch Black Monochrome (OLED-friendly)** aesthetic inspir
 ## 📸 Screenshots
 *(Note: Add your actual screenshots to a `/docs` folder and update these paths!)*
 
-| Mobile Home | Full-Screen Player | Admin Dashboard |
 |:---:|:---:|:---:|
-| <img src="https://via.placeholder.com/250x500/000000/ffffff?text=Mobile+Home" width="250"> | <img src="https://via.placeholder.com/250x500/000000/ffffff?text=Max+Player" width="250"> | <img src="https://via.placeholder.com/250x500/121212/ffffff?text=Admin+Panel" width="250"> |
+| <img src="docs/1.jpg" width="250"> | <img src="docs/2.jpg" width="250"> | <img src="docs/3.jpg" width="250"> | <img src="docs/4.jpg" width="250"> |
 
 ---
 
