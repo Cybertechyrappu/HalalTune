@@ -92,16 +92,23 @@ document.getElementById('get-started-btn').addEventListener('click', () => {
     }});
 });
 
-// Google Authentication
+// UPGRADED GOOGLE AUTHENTICATION LOGIC
 document.getElementById('google-login-btn').addEventListener('click', () => {
     const provider = new firebase.auth.GoogleAuthProvider();
-    auth.signInWithRedirect(provider);
-});
-
-// Handle Redirect Errors
-auth.getRedirectResult().catch((error) => {
-    console.error("Google Sign-In Error:", error);
-    alert("Login Failed: " + error.message);
+    
+    // Using Popup instead of Redirect. Redirect breaks easily inside PWAs.
+    auth.signInWithPopup(provider).then((result) => {
+        console.log("Successfully logged in as: ", result.user.displayName);
+    }).catch((error) => {
+        console.error("Google Sign-In Error:", error);
+        
+        // This catches the exact Spck Editor WebView error
+        if (error.message.includes('disallowed_useragent') || error.code === 'auth/web-storage-unsupported') {
+            alert("⚠️ GOOGLE SECURITY BLOCK ⚠️\n\nGoogle blocks logins inside code editors like Spck Preview.\n\nPlease open your standard Chrome browser and go to your localhost URL, or push to GitHub to test logging in!");
+        } else {
+            alert("Login Failed: " + error.message);
+        }
+    });
 });
 
 const logout = () => auth.signOut();
