@@ -1,5 +1,16 @@
 // ==========================================
-// 1. FIREBASE INITIALIZATION & STATE
+// 0. PWA SERVICE WORKER REGISTRATION
+// ==========================================
+if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+        navigator.serviceWorker.register('./sw.js')
+            .then(reg => console.log('Service Worker Registered!', reg))
+            .catch(err => console.log('Service Worker Registration Failed!', err));
+    });
+}
+
+// ==========================================
+// 1. FIREBASE INITIALIZATION
 // ==========================================
 const firebaseConfig = {
     apiKey: "AIzaSyD7bc74wJSIRi1_BhDqFjEMG2mE3noBm4g",
@@ -14,326 +25,417 @@ if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
 const auth = firebase.auth();
 const db = firebase.firestore();
 
-// Global App State
-let allTracks = [];      // Holds all songs from DB
-let likedSongIds = new Set(); // Holds IDs of songs the user liked
-let currentPlayingTrackId = null; 
+let allTracks = [];      
+let currentQueue = [];
+let currentTrackIndex = -1;
+let isShuffle = false;
+let isRepeat = false;
+let likedSongIds = new Set();
+let currentTab = 'all'; 
 
-function requireAuth(actionCallback) {
-    if (auth.currentUser) actionCallback();
-    else document.getElementById('auth-modal').classList.add('active');
+// Generate Local UID for Anonymous Listener Tracking
+let localUserId = localStorage.getItem('halaltune_uid');
+if (!localUserId) {
+    localUserId = 'anon_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+    localStorage.setItem('halaltune_uid', localUserId);
 }
 
 // ==========================================
-// 2. UI MODALS & SIDEBAR TOGGLES
+// 2. AUTHENTICATION & ROUTING
 // ==========================================
-const sidebar = document.getElementById('sidebar');
-const mobileOverlay = document.getElementById('mobile-overlay');
-function toggleSidebar() {
-    sidebar.classList.toggle('open');
-    mobileOverlay.classList.toggle('active');
-}
-document.getElementById('menu-btn').addEventListener('click', toggleSidebar);
-document.getElementById('close-menu-btn').addEventListener('click', toggleSidebar);
-mobileOverlay.addEventListener('click', toggleSidebar);
+const introScreen = document.getElementById('intro-screen');
+const authScreen = document.getElementById('auth-screen');
+const appMain = document.getElementById('app-main');
 
-const authModal = document.getElementById('auth-modal');
-document.getElementById('profile-trigger').addEventListener('click', () => authModal.classList.add('active'));
-document.getElementById('close-modal-btn').addEventListener('click', () => authModal.classList.remove('active'));
-authModal.addEventListener('click', (e) => { if(e.target === authModal) authModal.classList.remove('active'); });
-
-document.getElementById('google-login-btn').addEventListener('click', () => {
-    const provider = new firebase.auth.GoogleAuthProvider();
-    auth.signInWithRedirect(provider);
-});
-auth.getRedirectResult().catch(err => {
-    console.error("Auth Error: ", err);
-    alert("Login Error: " + err.message);
-});
-
-document.getElementById('logout-btn').addEventListener('click', () => {
-    auth.signOut().then(() => {
-        authModal.classList.remove('active');
-        likedSongIds.clear(); 
-        renderView('home'); 
-    });
-});
-
-// Watch Auth State & Fetch User Data
 auth.onAuthStateChanged(user => {
     if (user) {
-        document.getElementById('login-state').style.display = 'none';
-        document.getElementById('profile-state').style.display = 'flex';
-        document.getElementById('modal-user-name').innerText = user.displayName || "User";
-        document.getElementById('modal-user-email').innerText = user.email;
-        if(user.photoURL) document.getElementById('top-bar-avatar').innerHTML = `<img src="${user.photoURL}">`;
+        db.collection('users').doc(user.uid).set({
+            lastLogin: firebase.firestore.FieldValue.serverTimestamp()
+        }, { merge: true });
+
+        introScreen.style.display = 'none';
+        authScreen.style.display = 'none';
+        appMain.style.display = 'flex';
+        gsap.to(appMain, { opacity: 1, duration: 0.5 });
         
-        // Fetch User's Liked Songs
-        db.collection('users').doc(user.uid).collection('likes').get().then(snap => {
+        db.collection('users').doc(user.uid).collection('likes').onSnapshot(snap => {
+            likedSongIds.clear(); 
             snap.forEach(doc => likedSongIds.add(doc.id));
             updateGlobalLikeButtons();
+            
+            if(currentTab === 'liked') renderList(getFilteredTracks());
+            else {
+                document.querySelectorAll('.list-like-btn').forEach(btn => {
+                    const tid = btn.getAttribute('data-id');
+                    if(likedSongIds.has(tid)) {
+                        btn.classList.add('liked');
+                        btn.innerHTML = '<i class="fa-solid fa-heart"></i>';
+                    } else {
+                        btn.classList.remove('liked');
+                        btn.innerHTML = '<i class="fa-regular fa-heart"></i>';
+                    }
+                });
+            }
         });
+        fetchAllTracks(); 
     } else {
-        document.getElementById('login-state').style.display = 'flex';
-        document.getElementById('profile-state').style.display = 'none';
-        document.getElementById('top-bar-avatar').innerHTML = `<i class="fa-solid fa-user"></i>`;
+        appMain.style.display = 'none';
+        authScreen.style.display = 'none';
+        introScreen.style.display = 'flex';
+        gsap.to(introScreen, { opacity: 1, duration: 0.5 });
     }
 });
 
-// ==========================================
-// 3. SPA ROUTER (NAVIGATION LOGIC)
-// ==========================================
-const viewContainer = document.getElementById('dynamic-view');
-const navItems = document.querySelectorAll('.nav-item');
+document.getElementById('get-started-btn').addEventListener('click', () => {
+    gsap.to(introScreen, { y: -50, opacity: 0, duration: 0.4, onComplete: () => {
+        introScreen.style.display = 'none';
+        authScreen.style.display = 'flex';
+        gsap.fromTo(authScreen, { y: 50, opacity: 0 }, { y: 0, opacity: 1, duration: 0.5, ease: 'power3.out' });
+    }});
+});
 
-navItems.forEach(item => {
-    item.addEventListener('click', (e) => {
-        e.preventDefault();
-        
-        if(item.classList.contains('auth-required') && !auth.currentUser) {
-            return authModal.classList.add('active');
-        }
+let confirmationResult;
+window.recaptchaVerifier = new firebase.auth.RecaptchaVerifier('recaptcha-container', { 'size': 'invisible' });
 
-        navItems.forEach(nav => nav.classList.remove('active'));
-        item.classList.add('active');
-        
-        if(window.innerWidth <= 768) toggleSidebar();
-        
-        const viewName = item.getAttribute('data-view');
-        renderView(viewName);
+document.getElementById('send-otp-btn').addEventListener('click', (e) => {
+    const btn = e.target;
+    const phoneInput = document.getElementById('phone-input').value;
+    if(phoneInput.length < 10) return alert("Enter valid number.");
+    
+    btn.innerText = "Sending...";
+    btn.disabled = true;
+
+    auth.signInWithPhoneNumber("+91" + phoneInput, window.recaptchaVerifier)
+        .then((result) => {
+            confirmationResult = result;
+            document.getElementById('phone-step').style.display = 'none';
+            document.getElementById('otp-step').style.display = 'block';
+            gsap.from('#otp-step', { opacity: 0, y: 20, duration: 0.4 });
+        }).catch((error) => {
+            alert("Error: " + error.message);
+            btn.innerText = "Send OTP";
+            btn.disabled = false;
+        });
+});
+
+document.getElementById('verify-otp-btn').addEventListener('click', (e) => {
+    const btn = e.target;
+    const otpCode = document.getElementById('otp-input').value;
+    if(otpCode.length < 6) return alert("Enter code.");
+    btn.innerText = "Verifying...";
+    btn.disabled = true;
+
+    confirmationResult.confirm(otpCode).catch(() => {
+        alert("Invalid code.");
+        btn.innerText = "Verify & Enter";
+        btn.disabled = false;
     });
 });
 
-function renderView(viewName) {
-    viewContainer.innerHTML = ''; 
-    
-    if (viewName === 'home') {
-        viewContainer.innerHTML = `<h2 class="section-title">Recommended for You</h2><div class="content-grid" id="grid-container"></div>`;
-        renderGrid(allTracks);
-    } 
-    else if (viewName === 'search') {
-        viewContainer.innerHTML = `
-            <div class="search-container">
-                <i class="fa-solid fa-magnifying-glass"></i>
-                <input type="text" id="search-input" class="search-input" placeholder="What do you want to listen to?">
-            </div>
-            <h2 class="section-title">Browse All</h2>
-            <div class="content-grid" id="grid-container"></div>
-        `;
-        renderGrid(allTracks);
-        
-        document.getElementById('search-input').addEventListener('input', (e) => {
-            const term = e.target.value.toLowerCase();
-            const filtered = allTracks.filter(t => t.title.toLowerCase().includes(term) || t.artist.toLowerCase().includes(term));
-            document.querySelector('.section-title').innerText = term ? "Top Results" : "Browse All";
-            renderGrid(filtered);
-        });
-    }
-    else if (viewName === 'liked') {
-        viewContainer.innerHTML = `<h2 class="section-title">Liked Songs</h2><div class="content-grid" id="grid-container"></div>`;
-        const likedTracks = allTracks.filter(t => likedSongIds.has(t.id));
-        if(likedTracks.length === 0) viewContainer.innerHTML += `<p style="color: var(--text-muted);">You haven't liked any songs yet.</p>`;
-        else renderGrid(likedTracks);
-    }
-    else if (viewName === 'library') {
-        viewContainer.innerHTML = `<h2 class="section-title">Your Uploads</h2><div class="content-grid" id="grid-container"></div>`;
-        const myTracks = allTracks.filter(t => t.uploadedBy === auth.currentUser.uid);
-        if(myTracks.length === 0) viewContainer.innerHTML += `<p style="color: var(--text-muted);">You haven't uploaded anything.</p>`;
-        else renderGrid(myTracks);
-    }
-    else if (viewName === 'albums') {
-        viewContainer.innerHTML = `<h2 class="section-title">Albums</h2><p style="color: var(--text-muted);">Album grouping feature coming soon!</p>`;
+document.getElementById('back-to-phone-btn').addEventListener('click', () => {
+    document.getElementById('otp-step').style.display = 'none';
+    document.getElementById('phone-step').style.display = 'block';
+    document.getElementById('send-otp-btn').innerText = "Send OTP";
+    document.getElementById('send-otp-btn').disabled = false;
+});
+
+const logout = () => auth.signOut();
+document.getElementById('logout-btn-desktop')?.addEventListener('click', logout);
+document.getElementById('logout-btn-mobile')?.addEventListener('click', logout);
+
+// ==========================================
+// 3. FETCH, FILTER & RENDER LIST LOGIC
+// ==========================================
+const listContainer = document.getElementById('track-list');
+const searchInput = document.getElementById('search-input');
+
+async function fetchAllTracks() {
+    listContainer.innerHTML = '<p style="text-align: center; color: #aaa; margin-top: 40px;">Loading library...</p>'; 
+    try {
+        const snapshot = await db.collection('songs').orderBy('createdAt', 'desc').get();
+        allTracks = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        renderList(getFilteredTracks());
+    } catch (error) { 
+        listContainer.innerHTML = '<p style="color: #ff4d4d; text-align: center;">Error loading tracks.</p>'; 
     }
 }
 
-function renderGrid(trackArray) {
-    const grid = document.getElementById('grid-container');
-    grid.innerHTML = '';
-    
-    trackArray.forEach((track, index) => {
-        const card = document.createElement('div');
-        card.className = 'track-card';
-        
-        const isLiked = likedSongIds.has(track.id);
-        const heartClass = isLiked ? 'fa-solid' : 'fa-regular';
-        const heartColor = isLiked ? 'var(--emerald)' : 'var(--text-muted)';
-        
-        const artHtml = track.coverArt 
-            ? `<img src="${track.coverArt}" style="width: 100%; aspect-ratio: 1; border-radius: 6px; object-fit: cover;">` 
-            : `<div class="track-image-placeholder"><i class="fa-solid fa-music"></i></div>`;
+function handleTabSwitch(tabName) {
+    currentTab = tabName;
+    document.querySelectorAll('.yt-nav-btn, .yt-chip').forEach(btn => {
+        if(btn.getAttribute('data-tab') === tabName) btn.classList.add('active');
+        else btn.classList.remove('active');
+    });
+    renderList(getFilteredTracks());
+}
 
-        card.innerHTML = `
-            ${artHtml}
-            <button class="card-like-btn" data-id="${track.id}"><i class="${heartClass} fa-heart" style="color: ${heartColor};"></i></button>
-            <div class="track-meta" style="margin-top: 10px;">
+document.querySelectorAll('.yt-nav-btn, .yt-chip').forEach(btn => {
+    if(btn.id && btn.id.includes('logout')) return;
+    btn.addEventListener('click', () => handleTabSwitch(btn.getAttribute('data-tab')));
+});
+
+searchInput?.addEventListener('input', () => renderList(getFilteredTracks()));
+
+function getFilteredTracks() {
+    let tracks = allTracks;
+    const term = searchInput?.value.toLowerCase() || "";
+    if(term) tracks = tracks.filter(t => t.title.toLowerCase().includes(term) || t.artist.toLowerCase().includes(term));
+    if(currentTab === 'liked') tracks = tracks.filter(t => likedSongIds.has(t.id));
+    return tracks;
+}
+
+function renderList(trackArray) {
+    listContainer.innerHTML = '';
+    if(trackArray.length === 0) {
+        listContainer.innerHTML = '<p style="text-align: center; color: #aaa; margin-top: 40px;">No tracks found.</p>';
+        return;
+    }
+
+    trackArray.forEach((track, index) => {
+        const item = document.createElement('div');
+        item.className = 'yt-list-item';
+        if(currentQueue.length > 0 && currentQueue[currentTrackIndex] && currentQueue[currentTrackIndex].id === track.id) {
+            item.classList.add('active');
+        }
+
+        const isLiked = likedSongIds.has(track.id);
+        const heartClass = isLiked ? 'fa-solid liked' : 'fa-regular';
+        const artHtml = track.coverArt ? `<img src="${track.coverArt}">` : `<i class="fa-solid fa-music"></i>`;
+
+        item.innerHTML = `
+            <div class="yt-list-art-wrapper">
+                ${artHtml}
+                <div class="yt-list-play-overlay"><i class="fa-solid fa-play"></i></div>
+            </div>
+            <div class="yt-list-meta">
                 <h3>${track.title}</h3>
                 <p>${track.artist}</p>
             </div>
+            <div class="yt-list-actions">
+                <button class="list-like-btn ${isLiked ? 'liked' : ''}" data-id="${track.id}">
+                    <i class="${heartClass} fa-heart"></i>
+                </button>
+            </div>
         `;
         
-        card.addEventListener('click', (e) => {
-            if(e.target.closest('.card-like-btn')) return; 
-            playTrack(track);
+        item.addEventListener('click', (e) => {
+            if(e.target.closest('.list-like-btn')) return;
+            currentQueue = [...trackArray];
+            currentTrackIndex = index;
+            playTrack();
+            document.querySelectorAll('.yt-list-item').forEach(el => el.classList.remove('active'));
+            item.classList.add('active');
         });
 
-        card.querySelector('.card-like-btn').addEventListener('click', (e) => {
-            requireAuth(() => toggleLike(track.id, e.currentTarget.querySelector('i')));
+        item.querySelector('.list-like-btn').addEventListener('click', (e) => {
+            e.stopPropagation();
+            toggleLike(track.id);
         });
 
-        grid.appendChild(card);
-        gsap.from(card, { y: 20, opacity: 0, duration: 0.5, delay: index * 0.05 });
+        listContainer.appendChild(item);
     });
 }
 
-// ==========================================
-// 4. LIKES & PLAYLIST CREATION LOGIC
-// ==========================================
-async function toggleLike(trackId, iconElement) {
+async function toggleLike(trackId) {
+    if(!auth.currentUser) return;
     const uid = auth.currentUser.uid;
     const likeRef = db.collection('users').doc(uid).collection('likes').doc(trackId);
+    const songRef = db.collection('songs').doc(trackId);
 
     if (likedSongIds.has(trackId)) {
-        await likeRef.delete();
-        likedSongIds.delete(trackId);
-        if(iconElement) { iconElement.classList.replace('fa-solid', 'fa-regular'); iconElement.style.color = "var(--text-muted)"; }
+        await likeRef.delete(); 
+        await songRef.update({ likeCount: firebase.firestore.FieldValue.increment(-1) });
     } else {
         await likeRef.set({ addedAt: firebase.firestore.FieldValue.serverTimestamp() });
-        likedSongIds.add(trackId);
-        if(iconElement) { iconElement.classList.replace('fa-regular', 'fa-solid'); iconElement.style.color = "var(--emerald)"; }
-    }
-    
-    if(trackId === currentPlayingTrackId) updateGlobalLikeButtons();
-    
-    if(document.querySelector('.nav-item[data-view="liked"]').classList.contains('active')) {
-        renderView('liked');
+        await songRef.update({ likeCount: firebase.firestore.FieldValue.increment(1) });
     }
 }
 
 function updateGlobalLikeButtons() {
-    if(!currentPlayingTrackId) return;
-    const isLiked = likedSongIds.has(currentPlayingTrackId);
-    const icons = [document.querySelector('#mini-like-btn i'), document.querySelector('#fs-like-btn i')];
-    
-    icons.forEach(icon => {
-        if(!icon) return;
-        if(isLiked) { icon.classList.replace('fa-regular', 'fa-solid'); icon.style.color = "var(--emerald)"; }
-        else { icon.classList.replace('fa-solid', 'fa-regular'); icon.style.color = "var(--text-muted)"; }
-    });
-}
-
-document.getElementById('mini-like-btn').addEventListener('click', (e) => { e.stopPropagation(); requireAuth(() => toggleLike(currentPlayingTrackId, null)); });
-document.getElementById('fs-like-btn').addEventListener('click', () => requireAuth(() => toggleLike(currentPlayingTrackId, null)));
-
-document.getElementById('create-playlist-btn').addEventListener('click', (e) => {
-    e.preventDefault();
-    requireAuth(() => {
-        const name = prompt("Name your new playlist:", "My Playlist");
-        if(name) {
-            db.collection('users').doc(auth.currentUser.uid).collection('playlists').add({ name: name, tracks: [], createdAt: firebase.firestore.FieldValue.serverTimestamp() });
-            alert(`Playlist "${name}" created!`);
-        }
-    });
-});
-
-// ==========================================
-// 5. CLOUDINARY UPLOAD WIDGET
-// ==========================================
-let uploadedAudioUrl = "";
-let uploadedCoverUrl = "";
-
-const cloudinaryWidget = cloudinary.createUploadWidget({
-    cloudName: 'detke30vn', 
-    uploadPreset: 'halaltune_uploads', 
-    sources: ['local', 'url'], 
-    multiple: true, 
-    clientAllowedFormats: ['mp3', 'wav', 'png', 'jpg', 'jpeg'],
-    maxFileSize: 50000000, 
-    theme: "minimal",
-    styles: { palette: { window: "#181818", sourceBg: "#0a0a0a", windowBorder: "#10b981", tabIcon: "#ffffff", action: "#10b981", inProgress: "#fbbf24", complete: "#10b981", textDark: "#000000", textLight: "#ffffff" } }
-}, async (error, result) => {
-    if (!error && result && result.event === "success") {
-        if (result.info.resource_type === "video") uploadedAudioUrl = result.info.secure_url;
-        else if (result.info.resource_type === "image") uploadedCoverUrl = result.info.secure_url;
-    }
-
-    if (!error && result && result.event === "close") {
-        if (uploadedAudioUrl) saveTrackToDatabase();
-        else uploadedCoverUrl = ""; 
-    }
-});
-
-document.getElementById('upload-track-btn').addEventListener('click', (e) => {
-    e.preventDefault();
-    requireAuth(() => cloudinaryWidget.open());
-});
-
-async function saveTrackToDatabase() {
-    const trackTitle = prompt("Enter Track Title:", "New Track");
-    const artistName = prompt("Enter Artist Name:", auth.currentUser.displayName || "Unknown Artist");
-
-    if (!trackTitle) return alert("Upload cancelled: A title is required.");
-
-    try {
-        await db.collection('songs').add({
-            title: trackTitle, artist: artistName, url: uploadedAudioUrl, coverArt: uploadedCoverUrl || "", 
-            uploadedBy: auth.currentUser.uid, createdAt: firebase.firestore.FieldValue.serverTimestamp()
-        });
-        alert("Track successfully added to HalalTune!");
-        uploadedAudioUrl = ""; uploadedCoverUrl = "";
-        fetchAllTracks(); // Refresh data
-    } catch (error) {
-        console.error(error); alert("Failed to save track.");
+    if(!currentQueue[currentTrackIndex]) return;
+    const trackId = currentQueue[currentTrackIndex].id;
+    const fsLikeBtn = document.getElementById('fs-like-btn');
+    if(likedSongIds.has(trackId)) {
+        fsLikeBtn.innerHTML = '<i class="fa-solid fa-heart"></i>';
+        fsLikeBtn.classList.add('liked');
+    } else {
+        fsLikeBtn.innerHTML = '<i class="fa-regular fa-heart"></i>';
+        fsLikeBtn.classList.remove('liked');
     }
 }
+document.getElementById('fs-like-btn').addEventListener('click', () => toggleLike(currentQueue[currentTrackIndex].id));
 
 // ==========================================
-// 6. FETCH LOGIC & AUDIO PLAYBACK
+// 4. AUDIO PLAYBACK & FS TABS LOGIC
 // ==========================================
-window.addEventListener('load', () => fetchAllTracks());
-
-async function fetchAllTracks() {
-    if(viewContainer) viewContainer.innerHTML = '<p style="text-align: center;">Loading library...</p>'; 
-    try {
-        const snapshot = await db.collection('songs').orderBy('createdAt', 'desc').get();
-        allTracks = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        
-        // Ensure we only render home if a specific view isn't already active
-        const activeNav = document.querySelector('.nav-item.active');
-        if(activeNav) renderView(activeNav.getAttribute('data-view'));
-        else renderView('home');
-
-    } catch (error) { 
-        console.error(error);
-        if(viewContainer) viewContainer.innerHTML = '<p style="color: red; text-align: center;">Error loading tracks.</p>'; 
-    }
-}
-
 const audio = document.getElementById('audio-element');
-function playTrack(track) {
-    currentPlayingTrackId = track.id;
+
+function playTrack() {
+    if (currentQueue.length === 0 || currentTrackIndex < 0) return;
+    const track = currentQueue[currentTrackIndex];
+
     document.getElementById('player-title').innerText = track.title;
     document.getElementById('player-artist').innerText = track.artist;
     document.getElementById('fs-player-title').innerText = track.title;
     document.getElementById('fs-player-artist').innerText = track.artist;
     
-    const artHtml = track.coverArt ? `<img src="${track.coverArt}">` : `<i class="fa-solid fa-music"></i>`;
-    document.getElementById('player-art').innerHTML = artHtml;
-    document.getElementById('fs-player-art').innerHTML = artHtml;
+    document.getElementById('player-art').innerHTML = track.coverArt ? `<img src="${track.coverArt}">` : `<i class="fa-solid fa-music"></i>`;
+    const artView = document.getElementById('fs-artwork-view');
+    artView.innerHTML = track.coverArt ? `<img src="${track.coverArt}">` : `<div class="fs-art-placeholder"><i class="fa-solid fa-music"></i></div>`;
 
     updateGlobalLikeButtons();
-
     audio.src = track.url;
     audio.play();
     setPlayState(true);
-    gsap.fromTo('#player-art, #fs-player-art', { scale: 0.8 }, { scale: 1, duration: 0.5, ease: "back.out(1.7)" });
+    
+    renderQueueUI();
+    fetchLyrics(track.title, track.artist);
+    renderRelated(track);
+
+    const activeUid = auth.currentUser ? auth.currentUser.uid : localUserId;
+    db.collection('songs').doc(track.id).update({
+        streamCount: firebase.firestore.FieldValue.increment(1),
+        listeners: firebase.firestore.FieldValue.arrayUnion(activeUid)
+    }).catch(err => console.log(err));
 }
+
+// --- BUBBLE TABS LOGIC ---
+const fsArtView = document.getElementById('fs-artwork-view');
+const fsTabContentView = document.getElementById('fs-tab-content-view');
+const bubbleBtns = document.querySelectorAll('.fs-bubble-btn');
+const viewQueue = document.getElementById('fs-queue-view');
+const viewLyrics = document.getElementById('fs-lyrics-view');
+const viewRelated = document.getElementById('fs-related-view');
+
+bubbleBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+        const target = btn.getAttribute('data-target');
+        
+        if(btn.classList.contains('active')) {
+            btn.classList.remove('active');
+            fsTabContentView.style.display = 'none';
+            fsArtView.style.display = 'flex';
+            return;
+        }
+
+        bubbleBtns.forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+
+        fsArtView.style.display = 'none';
+        fsTabContentView.style.display = 'block';
+        viewQueue.style.display = 'none';
+        viewLyrics.style.display = 'none';
+        viewRelated.style.display = 'none';
+
+        if(target === 'queue') viewQueue.style.display = 'block';
+        if(target === 'lyrics') viewLyrics.style.display = 'block';
+        if(target === 'related') viewRelated.style.display = 'block';
+    });
+});
+
+function renderQueueUI() {
+    viewQueue.innerHTML = '<div class="q-title-header">Up Next</div>';
+    if (currentTrackIndex >= currentQueue.length - 1) {
+        viewQueue.innerHTML += '<p class="lyrics-msg">End of queue.</p>';
+        return;
+    }
+    let count = 0;
+    for(let i = currentTrackIndex + 1; i < currentQueue.length; i++) {
+        if(count >= 15) break; 
+        const t = currentQueue[i];
+        const item = document.createElement('div');
+        item.className = 'q-item';
+        const artHtml = t.coverArt ? `<img src="${t.coverArt}" class="q-item-art">` : `<div class="q-item-art"><i class="fa-solid fa-music"></i></div>`;
+        item.innerHTML = `${artHtml}<div class="q-item-info"><span class="q-item-title">${t.title}</span><span class="q-item-artist">${t.artist}</span></div>`;
+        
+        item.addEventListener('click', () => {
+            currentTrackIndex = i;
+            playTrack();
+            renderList(getFilteredTracks());
+        });
+        viewQueue.appendChild(item);
+        count++;
+    }
+}
+
+async function fetchLyrics(title, artist) {
+    viewLyrics.innerHTML = '<p class="lyrics-msg">Searching for lyrics...</p>';
+    try {
+        const url = `https://lrclib.net/api/get?artist_name=${encodeURIComponent(artist)}&track_name=${encodeURIComponent(title)}`;
+        const res = await fetch(url);
+        if(!res.ok) throw new Error("Not found");
+        const data = await res.json();
+        if(data.plainLyrics) viewLyrics.innerHTML = `<pre class="lyrics-text">${data.plainLyrics}</pre>`;
+        else throw new Error("No lyrics");
+    } catch (err) {
+        viewLyrics.innerHTML = '<p class="lyrics-msg">Lyrics not available for this track.</p>';
+    }
+}
+
+function renderRelated(currentTrack) {
+    viewRelated.innerHTML = '<div class="q-title-header">More Like This</div>';
+    let related = allTracks.filter(t => t.artist === currentTrack.artist && t.id !== currentTrack.id);
+    if(related.length === 0) related = allTracks.filter(t => t.id !== currentTrack.id).sort(() => 0.5 - Math.random()).slice(0, 5);
+
+    related.forEach(t => {
+        const item = document.createElement('div');
+        item.className = 'q-item';
+        const artHtml = t.coverArt ? `<img src="${t.coverArt}" class="q-item-art">` : `<div class="q-item-art"><i class="fa-solid fa-music"></i></div>`;
+        item.innerHTML = `${artHtml}<div class="q-item-info"><span class="q-item-title">${t.title}</span><span class="q-item-artist">${t.artist}</span></div>`;
+        
+        item.addEventListener('click', () => {
+            const idx = allTracks.findIndex(track => track.id === t.id);
+            if(idx !== -1) {
+                currentQueue = [...allTracks];
+                currentTrackIndex = idx;
+                playTrack();
+                renderList(getFilteredTracks());
+            }
+        });
+        viewRelated.appendChild(item);
+    });
+}
+
+// --- CONTROLS ---
+function playNext() {
+    if(currentQueue.length === 0) return;
+    if(isShuffle) currentTrackIndex = Math.floor(Math.random() * currentQueue.length);
+    else { currentTrackIndex++; if(currentTrackIndex >= currentQueue.length) currentTrackIndex = 0; }
+    playTrack();
+    renderList(getFilteredTracks()); 
+}
+
+function playPrev() {
+    if(currentQueue.length === 0) return;
+    if(isShuffle) currentTrackIndex = Math.floor(Math.random() * currentQueue.length);
+    else { currentTrackIndex--; if(currentTrackIndex < 0) currentTrackIndex = currentQueue.length - 1; }
+    playTrack();
+    renderList(getFilteredTracks());
+}
+
+document.getElementById('fs-next-btn').addEventListener('click', playNext);
+document.getElementById('desk-next-btn')?.addEventListener('click', playNext);
+document.getElementById('fs-prev-btn').addEventListener('click', playPrev);
+document.getElementById('desk-prev-btn')?.addEventListener('click', playPrev);
+
+const shuffleBtn = document.getElementById('fs-shuffle-btn');
+shuffleBtn.addEventListener('click', () => {
+    isShuffle = !isShuffle;
+    shuffleBtn.classList.toggle('active', isShuffle);
+});
+
+const repeatBtn = document.getElementById('fs-repeat-btn');
+repeatBtn.addEventListener('click', () => {
+    isRepeat = !isRepeat;
+    repeatBtn.classList.toggle('active', isRepeat);
+});
 
 const playBtns = [document.getElementById('play-btn'), document.getElementById('fs-play-btn')];
 function setPlayState(isPlaying) {
     playBtns.forEach(btn => {
         const icon = btn.querySelector('i');
-        if(isPlaying) icon.classList.replace('fa-circle-play', 'fa-circle-pause');
-        else icon.classList.replace('fa-circle-pause', 'fa-circle-play');
+        if(isPlaying) icon.classList.replace('fa-play', 'fa-pause');
+        else icon.classList.replace('fa-pause', 'fa-play');
     });
 }
 
@@ -343,11 +445,19 @@ playBtns.forEach(btn => btn.addEventListener('click', (e) => {
     if(audio.paused) { audio.play(); setPlayState(true); } else { audio.pause(); setPlayState(false); }
 }));
 
+function updateM3Slider(bar, percent) {
+    bar.value = percent;
+    bar.style.background = `linear-gradient(to right, #ffffff ${percent}%, #333333 ${percent}%)`;
+}
+
+const miniBar = document.getElementById('progress-bar');
+const fsBar = document.getElementById('fs-progress-bar');
+
 audio.addEventListener('timeupdate', () => {
     if (audio.duration) {
         const percent = (audio.currentTime / audio.duration) * 100;
-        document.getElementById('progress-bar').value = percent;
-        document.getElementById('fs-progress-bar').value = percent;
+        updateM3Slider(miniBar, percent);
+        updateM3Slider(fsBar, percent);
         
         let cMins = Math.floor(audio.currentTime / 60);
         let cSecs = Math.floor(audio.currentTime % 60).toString().padStart(2, '0');
@@ -359,50 +469,84 @@ audio.addEventListener('timeupdate', () => {
     }
 });
 
-document.getElementById('progress-bar').addEventListener('input', e => audio.currentTime = (e.target.value / 100) * audio.duration);
-document.getElementById('fs-progress-bar').addEventListener('input', e => audio.currentTime = (e.target.value / 100) * audio.duration);
+function handleSeek(e) {
+    e.stopPropagation();
+    if(!audio.src) return;
+    const percent = e.target.value;
+    audio.currentTime = (percent / 100) * audio.duration;
+    updateM3Slider(miniBar, percent);
+    updateM3Slider(fsBar, percent);
+}
+
+miniBar.addEventListener('input', handleSeek);
+fsBar.addEventListener('input', handleSeek);
 
 audio.addEventListener('ended', () => {
-    setPlayState(false);
-    document.getElementById('progress-bar').value = 0; document.getElementById('fs-progress-bar').value = 0;
-    document.getElementById('fs-current-time').innerText = "0:00";
+    if(isRepeat) { audio.currentTime = 0; audio.play(); } 
+    else { playNext(); }
 });
 
-// Full Screen Sliders
+// ==========================================
+// 5. 3-DOT MENU & DOWNLOAD LOGIC
+// ==========================================
+const optionsModal = document.getElementById('options-modal');
+document.getElementById('fs-menu-btn').addEventListener('click', () => {
+    if(!currentQueue[currentTrackIndex]) return;
+    optionsModal.style.display = 'flex';
+});
+
+document.getElementById('opt-close-btn').addEventListener('click', () => optionsModal.style.display = 'none');
+optionsModal.addEventListener('click', (e) => { if(e.target === optionsModal) optionsModal.style.display = 'none'; });
+
+document.getElementById('opt-download-btn').addEventListener('click', () => {
+    if(!currentQueue[currentTrackIndex]) return;
+    const track = currentQueue[currentTrackIndex];
+    
+    db.collection('songs').doc(track.id).update({
+        downloadCount: firebase.firestore.FieldValue.increment(1)
+    });
+    
+    window.open(track.url, '_blank');
+    optionsModal.style.display = 'none';
+});
+
+document.getElementById('opt-share-btn').addEventListener('click', () => {
+    if(!currentQueue[currentTrackIndex]) return;
+    const track = currentQueue[currentTrackIndex];
+    
+    if (navigator.share) {
+        navigator.share({
+            title: `Listen to ${track.title} by ${track.artist}`,
+            url: window.location.href
+        }).catch(console.error);
+    } else {
+        alert("Link copied to clipboard!");
+    }
+    optionsModal.style.display = 'none';
+});
+
+// ==========================================
+// 6. PLAYER SWIPE GESTURES
+// ==========================================
+const miniPlayer = document.getElementById('mini-player');
 const fsPlayer = document.getElementById('full-screen-player');
-document.getElementById('mini-player').addEventListener('click', (e) => {
+const closeFsBtn = document.getElementById('close-fs-btn');
+
+miniPlayer.addEventListener('click', (e) => {
     if (window.innerWidth <= 768 && !e.target.closest('button') && !e.target.closest('input')) fsPlayer.classList.add('active');
 });
-document.getElementById('close-fs-btn').addEventListener('click', () => fsPlayer.classList.remove('active'));
+closeFsBtn.addEventListener('click', () => fsPlayer.classList.remove('active'));
 
-document.getElementById('download-btn').addEventListener('click', (e) => {
-    e.stopPropagation();
-    requireAuth(() => { if(audio.src) window.open(audio.src, '_blank'); });
+let startY = 0;
+miniPlayer.addEventListener('touchstart', e => startY = e.touches[0].clientY);
+miniPlayer.addEventListener('touchend', e => {
+    let endY = e.changedTouches[0].clientY;
+    if (window.innerWidth <= 768 && startY - endY > 30) fsPlayer.classList.add('active'); 
 });
 
-// ==========================================
-// 7. THREE.JS ELEGANT BACKGROUND
-// ==========================================
-const canvas = document.querySelector('#bg-canvas');
-const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-const renderer = new THREE.WebGLRenderer({ canvas: canvas, alpha: true });
-renderer.setSize(window.innerWidth, window.innerHeight);
-camera.position.z = 30;
-
-const particlesGeometry = new THREE.BufferGeometry();
-const posArray = new Float32Array(300 * 3);
-for(let i = 0; i < 900; i++) posArray[i] = (Math.random() - 0.5) * 100;
-
-particlesGeometry.setAttribute('position', new THREE.BufferAttribute(posArray, 3));
-const material = new THREE.PointsMaterial({ size: 0.12, color: 0x10b981 });
-const particlesMesh = new THREE.Points(particlesGeometry, material);
-scene.add(particlesMesh);
-
-function animateBg() {
-    requestAnimationFrame(animateBg);
-    particlesMesh.rotation.y += 0.001;
-    particlesMesh.rotation.x += 0.0005;
-    renderer.render(scene, camera);
-}
-animateBg();
+fsPlayer.addEventListener('touchstart', e => startY = e.touches[0].clientY);
+fsPlayer.addEventListener('touchend', e => {
+    if(e.target.closest('.fs-scrollable-content') || e.target.closest('.options-content')) return;
+    let endY = e.changedTouches[0].clientY;
+    if (endY - startY > 80) fsPlayer.classList.remove('active'); 
+});
