@@ -38,7 +38,7 @@ if (!localUserId) {
 }
 
 // ==========================================
-// 2. AUTHENTICATION & ROUTING
+// 2. AUTHENTICATION (GOOGLE) & ROUTING
 // ==========================================
 const introScreen = document.getElementById('intro-screen');
 const authScreen = document.getElementById('auth-screen');
@@ -236,9 +236,29 @@ function updateGlobalLikeButtons() {
 document.getElementById('fs-like-btn').addEventListener('click', () => toggleLike(currentQueue[currentTrackIndex].id));
 
 // ==========================================
-// 4. AUDIO PLAYBACK & NATIVE NOTIFICATIONS
+// 4. AUDIO PLAYBACK & NATIVE NOTIFICATION SYNC
 // ==========================================
 const audio = document.getElementById('audio-element');
+
+// This explicitly pushes Time and Play State to Android App
+window.updateAndroidMedia = function() {
+    if (window.AndroidBridge && window.AndroidBridge.updateMediaNotification && currentQueue[currentTrackIndex]) {
+        const track = currentQueue[currentTrackIndex];
+        const dur = isNaN(audio.duration) ? 0 : Math.floor(audio.duration);
+        const pos = isNaN(audio.currentTime) ? 0 : Math.floor(audio.currentTime);
+        const isPlaying = !audio.paused;
+        window.AndroidBridge.updateMediaNotification(track.title, track.artist, track.coverArt || "", isPlaying, dur, pos);
+    }
+};
+
+// Called by Android App when user scrubs the lockscreen seekbar
+window.nativeSeek = function(seconds) {
+    audio.currentTime = seconds;
+};
+
+// Update Android App when metadata (duration) successfully loads or when seeking finishes
+audio.addEventListener('loadedmetadata', window.updateAndroidMedia);
+audio.addEventListener('seeked', window.updateAndroidMedia);
 
 function playTrack() {
     if (currentQueue.length === 0 || currentTrackIndex < 0) return;
@@ -261,7 +281,9 @@ function playTrack() {
     renderQueueUI();
     fetchLyrics(track.title, track.artist);
     renderRelated(track);
-    setupMediaSession(track); 
+    
+    // Only setup Web media session if NOT running inside Android app (prevent conflicts)
+    if (!window.AndroidBridge) setupMediaSession(track);
 
     const activeUid = auth.currentUser ? auth.currentUser.uid : localUserId;
     db.collection('songs').doc(track.id).update({
@@ -270,32 +292,31 @@ function playTrack() {
     }).catch(err => console.log(err));
 }
 
-// NATIVE ANDROID NOTIFICATION TRIGGER
-function triggerAndroidNotification(isPlaying) {
-    if (window.AndroidBridge && window.AndroidBridge.updateMediaNotification && currentQueue.length > 0 && currentTrackIndex >= 0) {
-        const track = currentQueue[currentTrackIndex];
-        window.AndroidBridge.updateMediaNotification(track.title, track.artist, track.coverArt || "", isPlaying);
-    }
-}
-
 function setupMediaSession(track) {
     if ('mediaSession' in navigator) {
         navigator.mediaSession.metadata = new MediaMetadata({
-            title: track.title,
-            artist: track.artist,
-            album: 'HalalTune',
-            artwork: [
-                { src: track.coverArt || 'icon.png', sizes: '512x512', type: 'image/png' },
-                { src: track.coverArt || 'icon.png', sizes: '192x192', type: 'image/png' }
-            ]
+            title: track.title, artist: track.artist, album: 'HalalTune',
+            artwork: [{ src: track.coverArt || 'icon.png', sizes: '512x512', type: 'image/png' }]
         });
-
         navigator.mediaSession.setActionHandler('play', () => { audio.play(); setPlayState(true); });
         navigator.mediaSession.setActionHandler('pause', () => { audio.pause(); setPlayState(false); });
         navigator.mediaSession.setActionHandler('previoustrack', () => window.playPrev());
         navigator.mediaSession.setActionHandler('nexttrack', () => window.playNext());
+        navigator.mediaSession.setActionHandler('seekto', (details) => {
+            audio.currentTime = details.seekTime;
+            updatePositionState();
+        });
     }
 }
+
+function updatePositionState() {
+    if (!window.AndroidBridge && 'mediaSession' in navigator && !isNaN(audio.duration)) {
+        navigator.mediaSession.setPositionState({ duration: audio.duration, playbackRate: audio.playbackRate, position: audio.currentTime });
+    }
+}
+audio.addEventListener('loadeddata', updatePositionState);
+audio.addEventListener('timeupdate', () => { if(!window.AndroidBridge) updatePositionState(); });
+
 
 // --- BUBBLE TABS LOGIC ---
 const fsArtView = document.getElementById('fs-artwork-view');
@@ -308,23 +329,19 @@ const viewRelated = document.getElementById('fs-related-view');
 bubbleBtns.forEach(btn => {
     btn.addEventListener('click', () => {
         const target = btn.getAttribute('data-target');
-        
         if(btn.classList.contains('active')) {
             btn.classList.remove('active');
             fsTabContentView.style.display = 'none';
             fsArtView.style.display = 'flex';
             return;
         }
-
         bubbleBtns.forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
-
         fsArtView.style.display = 'none';
         fsTabContentView.style.display = 'block';
         viewQueue.style.display = 'none';
         viewLyrics.style.display = 'none';
         viewRelated.style.display = 'none';
-
         if(target === 'queue') viewQueue.style.display = 'block';
         if(target === 'lyrics') viewLyrics.style.display = 'block';
         if(target === 'related') viewRelated.style.display = 'block';
@@ -345,7 +362,6 @@ function renderQueueUI() {
         item.className = 'q-item';
         const artHtml = t.coverArt ? `<img src="${t.coverArt}" class="q-item-art">` : `<div class="q-item-art"><i class="fa-solid fa-music"></i></div>`;
         item.innerHTML = `${artHtml}<div class="q-item-info"><span class="q-item-title">${t.title}</span><span class="q-item-artist">${t.artist}</span></div>`;
-        
         item.addEventListener('click', () => {
             currentTrackIndex = i;
             playTrack();
@@ -380,7 +396,6 @@ function renderRelated(currentTrack) {
         item.className = 'q-item';
         const artHtml = t.coverArt ? `<img src="${t.coverArt}" class="q-item-art">` : `<div class="q-item-art"><i class="fa-solid fa-music"></i></div>`;
         item.innerHTML = `${artHtml}<div class="q-item-info"><span class="q-item-title">${t.title}</span><span class="q-item-artist">${t.artist}</span></div>`;
-        
         item.addEventListener('click', () => {
             const idx = allTracks.findIndex(track => track.id === t.id);
             if(idx !== -1) {
@@ -435,11 +450,8 @@ function setPlayState(isPlaying) {
         if(isPlaying) icon.classList.replace('fa-play', 'fa-pause');
         else icon.classList.replace('fa-pause', 'fa-play');
     });
-    
-    if ('mediaSession' in navigator) {
-        navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused';
-    }
-    triggerAndroidNotification(isPlaying);
+    // Triggers notification UI update in Android App
+    window.updateAndroidMedia();
 }
 
 playBtns.forEach(btn => btn.addEventListener('click', (e) => {
@@ -504,11 +516,9 @@ optionsModal.addEventListener('click', (e) => { if(e.target === optionsModal) op
 document.getElementById('opt-download-btn').addEventListener('click', () => {
     if(!currentQueue[currentTrackIndex]) return;
     const track = currentQueue[currentTrackIndex];
-    
     db.collection('songs').doc(track.id).update({
         downloadCount: firebase.firestore.FieldValue.increment(1)
     });
-    
     window.open(track.url, '_blank');
     optionsModal.style.display = 'none';
 });
@@ -516,12 +526,8 @@ document.getElementById('opt-download-btn').addEventListener('click', () => {
 document.getElementById('opt-share-btn').addEventListener('click', () => {
     if(!currentQueue[currentTrackIndex]) return;
     const track = currentQueue[currentTrackIndex];
-    
     if (navigator.share) {
-        navigator.share({
-            title: `Listen to ${track.title} by ${track.artist}`,
-            url: window.location.href
-        }).catch(console.error);
+        navigator.share({ title: `Listen to ${track.title} by ${track.artist}`, url: window.location.href }).catch(console.error);
     } else {
         alert("Link copied to clipboard!");
     }
