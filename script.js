@@ -3,9 +3,7 @@
 // ==========================================
 if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
-        navigator.serviceWorker.register('./sw.js')
-            .then(reg => console.log('Service Worker Registered!', reg))
-            .catch(err => console.log('Service Worker Registration Failed!', err));
+        navigator.serviceWorker.register('./sw.js').catch(err => console.log(err));
     });
 }
 
@@ -41,7 +39,7 @@ if (!localUserId) {
 }
 
 // ==========================================
-// 2. AUTHENTICATION & ROUTING
+// 2. AUTHENTICATION (GOOGLE) & ROUTING
 // ==========================================
 const introScreen = document.getElementById('intro-screen');
 const authScreen = document.getElementById('auth-screen');
@@ -94,49 +92,16 @@ document.getElementById('get-started-btn').addEventListener('click', () => {
     }});
 });
 
-let confirmationResult;
-window.recaptchaVerifier = new firebase.auth.RecaptchaVerifier('recaptcha-container', { 'size': 'invisible' });
-
-document.getElementById('send-otp-btn').addEventListener('click', (e) => {
-    const btn = e.target;
-    const phoneInput = document.getElementById('phone-input').value;
-    if(phoneInput.length < 10) return alert("Enter valid number.");
-    
-    btn.innerText = "Sending...";
-    btn.disabled = true;
-
-    auth.signInWithPhoneNumber("+91" + phoneInput, window.recaptchaVerifier)
-        .then((result) => {
-            confirmationResult = result;
-            document.getElementById('phone-step').style.display = 'none';
-            document.getElementById('otp-step').style.display = 'block';
-            gsap.from('#otp-step', { opacity: 0, y: 20, duration: 0.4 });
-        }).catch((error) => {
-            alert("Error: " + error.message);
-            btn.innerText = "Send OTP";
-            btn.disabled = false;
-        });
+// Google Authentication
+document.getElementById('google-login-btn').addEventListener('click', () => {
+    const provider = new firebase.auth.GoogleAuthProvider();
+    auth.signInWithRedirect(provider);
 });
 
-document.getElementById('verify-otp-btn').addEventListener('click', (e) => {
-    const btn = e.target;
-    const otpCode = document.getElementById('otp-input').value;
-    if(otpCode.length < 6) return alert("Enter code.");
-    btn.innerText = "Verifying...";
-    btn.disabled = true;
-
-    confirmationResult.confirm(otpCode).catch(() => {
-        alert("Invalid code.");
-        btn.innerText = "Verify & Enter";
-        btn.disabled = false;
-    });
-});
-
-document.getElementById('back-to-phone-btn').addEventListener('click', () => {
-    document.getElementById('otp-step').style.display = 'none';
-    document.getElementById('phone-step').style.display = 'block';
-    document.getElementById('send-otp-btn').innerText = "Send OTP";
-    document.getElementById('send-otp-btn').disabled = false;
+// Handle Redirect Errors
+auth.getRedirectResult().catch((error) => {
+    console.error("Google Sign-In Error:", error);
+    alert("Login Failed: " + error.message);
 });
 
 const logout = () => auth.signOut();
@@ -162,14 +127,14 @@ async function fetchAllTracks() {
 
 function handleTabSwitch(tabName) {
     currentTab = tabName;
-    document.querySelectorAll('.yt-nav-btn, .yt-chip').forEach(btn => {
+    document.querySelectorAll('.yt-nav-btn, .yt-chip, .yt-nav-item').forEach(btn => {
         if(btn.getAttribute('data-tab') === tabName) btn.classList.add('active');
         else btn.classList.remove('active');
     });
     renderList(getFilteredTracks());
 }
 
-document.querySelectorAll('.yt-nav-btn, .yt-chip').forEach(btn => {
+document.querySelectorAll('.yt-nav-btn, .yt-chip, .yt-nav-item').forEach(btn => {
     if(btn.id && btn.id.includes('logout')) return;
     btn.addEventListener('click', () => handleTabSwitch(btn.getAttribute('data-tab')));
 });
