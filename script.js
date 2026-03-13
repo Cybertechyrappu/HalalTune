@@ -65,12 +65,13 @@ auth.onAuthStateChanged(user => {
             else {
                 document.querySelectorAll('.list-like-btn').forEach(btn => {
                     const tid = btn.getAttribute('data-id');
+                    const icon = btn.querySelector('i');
                     if(likedSongIds.has(tid)) {
                         btn.classList.add('liked');
-                        btn.innerHTML = '<i class="fa-solid fa-heart"></i>';
+                        icon.className = 'fa-solid fa-heart';
                     } else {
                         btn.classList.remove('liked');
-                        btn.innerHTML = '<i class="fa-regular fa-heart"></i>';
+                        icon.className = 'fa-regular fa-heart';
                     }
                 });
             }
@@ -92,17 +93,13 @@ document.getElementById('get-started-btn').addEventListener('click', () => {
     }});
 });
 
-// UPGRADED GOOGLE AUTHENTICATION LOGIC
+// Google Authentication
 document.getElementById('google-login-btn').addEventListener('click', () => {
     const provider = new firebase.auth.GoogleAuthProvider();
-    
-    // Using Popup instead of Redirect. Redirect breaks easily inside PWAs.
     auth.signInWithPopup(provider).then((result) => {
         console.log("Successfully logged in as: ", result.user.displayName);
     }).catch((error) => {
         console.error("Google Sign-In Error:", error);
-        
-        // This catches the exact Spck Editor WebView error
         if (error.message.includes('disallowed_useragent') || error.code === 'auth/web-storage-unsupported') {
             alert("⚠️ GOOGLE SECURITY BLOCK ⚠️\n\nGoogle blocks logins inside code editors like Spck Preview.\n\nPlease open your standard Chrome browser and go to your localhost URL, or push to GitHub to test logging in!");
         } else {
@@ -238,7 +235,7 @@ function updateGlobalLikeButtons() {
 document.getElementById('fs-like-btn').addEventListener('click', () => toggleLike(currentQueue[currentTrackIndex].id));
 
 // ==========================================
-// 4. AUDIO PLAYBACK & FS TABS LOGIC
+// 4. AUDIO PLAYBACK & OS NOTIFICATION LOGIC
 // ==========================================
 const audio = document.getElementById('audio-element');
 
@@ -263,6 +260,7 @@ function playTrack() {
     renderQueueUI();
     fetchLyrics(track.title, track.artist);
     renderRelated(track);
+    setupMediaSession(track); // Setup the native OS notification
 
     const activeUid = auth.currentUser ? auth.currentUser.uid : localUserId;
     db.collection('songs').doc(track.id).update({
@@ -270,6 +268,53 @@ function playTrack() {
         listeners: firebase.firestore.FieldValue.arrayUnion(activeUid)
     }).catch(err => console.log(err));
 }
+
+// --- MEDIA SESSION API (Android/iOS Notification integration) ---
+function setupMediaSession(track) {
+    if ('mediaSession' in navigator) {
+        // Set Notification Metadata (Title, Artist, Art)
+        navigator.mediaSession.metadata = new MediaMetadata({
+            title: track.title,
+            artist: track.artist,
+            album: 'HalalTune',
+            artwork: [
+                { src: track.coverArt || 'icon.png', sizes: '512x512', type: 'image/png' },
+                { src: track.coverArt || 'icon.png', sizes: '192x192', type: 'image/png' }
+            ]
+        });
+
+        // Hook up system hardware/notification buttons to our app's logic
+        navigator.mediaSession.setActionHandler('play', () => { audio.play(); setPlayState(true); });
+        navigator.mediaSession.setActionHandler('pause', () => { audio.pause(); setPlayState(false); });
+        navigator.mediaSession.setActionHandler('previoustrack', () => playPrev());
+        navigator.mediaSession.setActionHandler('nexttrack', () => playNext());
+        
+        // Connect the native system seekbar to our audio element
+        navigator.mediaSession.setActionHandler('seekto', (details) => {
+            if (details.fastSeek && 'fastSeek' in audio) {
+                audio.fastSeek(details.seekTime);
+            } else {
+                audio.currentTime = details.seekTime;
+            }
+            updatePositionState();
+        });
+    }
+}
+
+// Keep the OS notification seekbar perfectly in sync with the song
+function updatePositionState() {
+    if ('mediaSession' in navigator && !isNaN(audio.duration)) {
+        navigator.mediaSession.setPositionState({
+            duration: audio.duration,
+            playbackRate: audio.playbackRate,
+            position: audio.currentTime
+        });
+    }
+}
+
+// Update the system seekbar whenever the track naturally progresses or metadata loads
+audio.addEventListener('loadeddata', updatePositionState);
+audio.addEventListener('seeked', updatePositionState);
 
 // --- BUBBLE TABS LOGIC ---
 const fsArtView = document.getElementById('fs-artwork-view');
@@ -409,6 +454,11 @@ function setPlayState(isPlaying) {
         if(isPlaying) icon.classList.replace('fa-play', 'fa-pause');
         else icon.classList.replace('fa-pause', 'fa-play');
     });
+    
+    // Update OS Notification playback state
+    if ('mediaSession' in navigator) {
+        navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused';
+    }
 }
 
 playBtns.forEach(btn => btn.addEventListener('click', (e) => {
