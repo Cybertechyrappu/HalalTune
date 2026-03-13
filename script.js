@@ -38,7 +38,7 @@ if (!localUserId) {
 }
 
 // ==========================================
-// 2. AUTHENTICATION & NATIVE BRIDGE ROUTING
+// 2. AUTHENTICATION & ROUTING
 // ==========================================
 const introScreen = document.getElementById('intro-screen');
 const authScreen = document.getElementById('auth-screen');
@@ -91,28 +91,20 @@ document.getElementById('get-started-btn').addEventListener('click', () => {
     }});
 });
 
-// UPGRADED GOOGLE AUTHENTICATION LOGIC (Checks for Android App)
 document.getElementById('google-login-btn').addEventListener('click', () => {
-    // If running inside our Android App, ask Android to show the native account picker
     if (window.AndroidBridge && window.AndroidBridge.loginWithGoogle) {
         window.AndroidBridge.loginWithGoogle();
     } else {
-        // If running in a standard Chrome Browser, use standard popup
         const provider = new firebase.auth.GoogleAuthProvider();
         auth.signInWithPopup(provider).catch((error) => {
-            console.error("Google Sign-In Error:", error);
             alert("Login Failed: " + error.message);
         });
     }
 });
 
-// This function is triggered directly by the Android Java code after selecting an account
 window.firebaseNativeLogin = function(idToken) {
     const credential = firebase.auth.GoogleAuthProvider.credential(idToken);
-    auth.signInWithCredential(credential).then((result) => {
-        console.log("Logged in via Native Android bridge!");
-    }).catch((error) => {
-        console.error("Firebase Native Auth Error:", error);
+    auth.signInWithCredential(credential).catch((error) => {
         alert("Authentication Failed: " + error.message);
     });
 };
@@ -244,7 +236,7 @@ function updateGlobalLikeButtons() {
 document.getElementById('fs-like-btn').addEventListener('click', () => toggleLike(currentQueue[currentTrackIndex].id));
 
 // ==========================================
-// 4. AUDIO PLAYBACK & OS NOTIFICATION LOGIC
+// 4. AUDIO PLAYBACK & NATIVE NOTIFICATIONS
 // ==========================================
 const audio = document.getElementById('audio-element');
 
@@ -278,6 +270,14 @@ function playTrack() {
     }).catch(err => console.log(err));
 }
 
+// NATIVE ANDROID NOTIFICATION TRIGGER
+function triggerAndroidNotification(isPlaying) {
+    if (window.AndroidBridge && window.AndroidBridge.updateMediaNotification && currentQueue.length > 0 && currentTrackIndex >= 0) {
+        const track = currentQueue[currentTrackIndex];
+        window.AndroidBridge.updateMediaNotification(track.title, track.artist, track.coverArt || "", isPlaying);
+    }
+}
+
 function setupMediaSession(track) {
     if ('mediaSession' in navigator) {
         navigator.mediaSession.metadata = new MediaMetadata({
@@ -292,32 +292,10 @@ function setupMediaSession(track) {
 
         navigator.mediaSession.setActionHandler('play', () => { audio.play(); setPlayState(true); });
         navigator.mediaSession.setActionHandler('pause', () => { audio.pause(); setPlayState(false); });
-        navigator.mediaSession.setActionHandler('previoustrack', () => playPrev());
-        navigator.mediaSession.setActionHandler('nexttrack', () => playNext());
-        
-        navigator.mediaSession.setActionHandler('seekto', (details) => {
-            if (details.fastSeek && 'fastSeek' in audio) {
-                audio.fastSeek(details.seekTime);
-            } else {
-                audio.currentTime = details.seekTime;
-            }
-            updatePositionState();
-        });
+        navigator.mediaSession.setActionHandler('previoustrack', () => window.playPrev());
+        navigator.mediaSession.setActionHandler('nexttrack', () => window.playNext());
     }
 }
-
-function updatePositionState() {
-    if ('mediaSession' in navigator && !isNaN(audio.duration)) {
-        navigator.mediaSession.setPositionState({
-            duration: audio.duration,
-            playbackRate: audio.playbackRate,
-            position: audio.currentTime
-        });
-    }
-}
-
-audio.addEventListener('loadeddata', updatePositionState);
-audio.addEventListener('seeked', updatePositionState);
 
 // --- BUBBLE TABS LOGIC ---
 const fsArtView = document.getElementById('fs-artwork-view');
@@ -416,27 +394,27 @@ function renderRelated(currentTrack) {
     });
 }
 
-// --- CONTROLS ---
-function playNext() {
+// --- CONTROLS EXPOSED GLOBALLY FOR ANDROID SERVICE ---
+window.playNext = function() {
     if(currentQueue.length === 0) return;
     if(isShuffle) currentTrackIndex = Math.floor(Math.random() * currentQueue.length);
     else { currentTrackIndex++; if(currentTrackIndex >= currentQueue.length) currentTrackIndex = 0; }
     playTrack();
     renderList(getFilteredTracks()); 
-}
+};
 
-function playPrev() {
+window.playPrev = function() {
     if(currentQueue.length === 0) return;
     if(isShuffle) currentTrackIndex = Math.floor(Math.random() * currentQueue.length);
     else { currentTrackIndex--; if(currentTrackIndex < 0) currentTrackIndex = currentQueue.length - 1; }
     playTrack();
     renderList(getFilteredTracks());
-}
+};
 
-document.getElementById('fs-next-btn').addEventListener('click', playNext);
-document.getElementById('desk-next-btn')?.addEventListener('click', playNext);
-document.getElementById('fs-prev-btn').addEventListener('click', playPrev);
-document.getElementById('desk-prev-btn')?.addEventListener('click', playPrev);
+document.getElementById('fs-next-btn').addEventListener('click', window.playNext);
+document.getElementById('desk-next-btn')?.addEventListener('click', window.playNext);
+document.getElementById('fs-prev-btn').addEventListener('click', window.playPrev);
+document.getElementById('desk-prev-btn')?.addEventListener('click', window.playPrev);
 
 const shuffleBtn = document.getElementById('fs-shuffle-btn');
 shuffleBtn.addEventListener('click', () => {
@@ -461,6 +439,7 @@ function setPlayState(isPlaying) {
     if ('mediaSession' in navigator) {
         navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused';
     }
+    triggerAndroidNotification(isPlaying);
 }
 
 playBtns.forEach(btn => btn.addEventListener('click', (e) => {
@@ -507,7 +486,7 @@ fsBar.addEventListener('input', handleSeek);
 
 audio.addEventListener('ended', () => {
     if(isRepeat) { audio.currentTime = 0; audio.play(); } 
-    else { playNext(); }
+    else { window.playNext(); }
 });
 
 // ==========================================
