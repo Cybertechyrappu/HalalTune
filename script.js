@@ -65,13 +65,12 @@ auth.onAuthStateChanged(user => {
             else {
                 document.querySelectorAll('.list-like-btn').forEach(btn => {
                     const tid = btn.getAttribute('data-id');
-                    const icon = btn.querySelector('i');
                     if(likedSongIds.has(tid)) {
                         btn.classList.add('liked');
-                        icon.className = 'fa-solid fa-heart';
+                        btn.innerHTML = '<i class="fa-solid fa-heart"></i>';
                     } else {
                         btn.classList.remove('liked');
-                        icon.className = 'fa-regular fa-heart';
+                        btn.innerHTML = '<i class="fa-regular fa-heart"></i>';
                     }
                 });
             }
@@ -131,14 +130,14 @@ async function fetchAllTracks() {
 
 function handleTabSwitch(tabName) {
     currentTab = tabName;
-    document.querySelectorAll('.yt-nav-btn, .yt-chip, .yt-nav-item').forEach(btn => {
+    document.querySelectorAll('.yt-nav-btn, .yt-chip').forEach(btn => {
         if(btn.getAttribute('data-tab') === tabName) btn.classList.add('active');
         else btn.classList.remove('active');
     });
     renderList(getFilteredTracks());
 }
 
-document.querySelectorAll('.yt-nav-btn, .yt-chip, .yt-nav-item').forEach(btn => {
+document.querySelectorAll('.yt-nav-btn, .yt-chip').forEach(btn => {
     if(btn.id && btn.id.includes('logout')) return;
     btn.addEventListener('click', () => handleTabSwitch(btn.getAttribute('data-tab')));
 });
@@ -260,7 +259,7 @@ function playTrack() {
     renderQueueUI();
     fetchLyrics(track.title, track.artist);
     renderRelated(track);
-    setupMediaSession(track); // Setup the native OS notification
+    setupMediaSession(track); 
 
     const activeUid = auth.currentUser ? auth.currentUser.uid : localUserId;
     db.collection('songs').doc(track.id).update({
@@ -269,10 +268,8 @@ function playTrack() {
     }).catch(err => console.log(err));
 }
 
-// --- MEDIA SESSION API (Android/iOS Notification integration) ---
 function setupMediaSession(track) {
     if ('mediaSession' in navigator) {
-        // Set Notification Metadata (Title, Artist, Art)
         navigator.mediaSession.metadata = new MediaMetadata({
             title: track.title,
             artist: track.artist,
@@ -283,13 +280,11 @@ function setupMediaSession(track) {
             ]
         });
 
-        // Hook up system hardware/notification buttons to our app's logic
         navigator.mediaSession.setActionHandler('play', () => { audio.play(); setPlayState(true); });
         navigator.mediaSession.setActionHandler('pause', () => { audio.pause(); setPlayState(false); });
         navigator.mediaSession.setActionHandler('previoustrack', () => playPrev());
         navigator.mediaSession.setActionHandler('nexttrack', () => playNext());
         
-        // Connect the native system seekbar to our audio element
         navigator.mediaSession.setActionHandler('seekto', (details) => {
             if (details.fastSeek && 'fastSeek' in audio) {
                 audio.fastSeek(details.seekTime);
@@ -301,7 +296,6 @@ function setupMediaSession(track) {
     }
 }
 
-// Keep the OS notification seekbar perfectly in sync with the song
 function updatePositionState() {
     if ('mediaSession' in navigator && !isNaN(audio.duration)) {
         navigator.mediaSession.setPositionState({
@@ -312,7 +306,6 @@ function updatePositionState() {
     }
 }
 
-// Update the system seekbar whenever the track naturally progresses or metadata loads
 audio.addEventListener('loadeddata', updatePositionState);
 audio.addEventListener('seeked', updatePositionState);
 
@@ -455,7 +448,6 @@ function setPlayState(isPlaying) {
         else icon.classList.replace('fa-pause', 'fa-play');
     });
     
-    // Update OS Notification playback state
     if ('mediaSession' in navigator) {
         navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused';
     }
