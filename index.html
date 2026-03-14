@@ -46,9 +46,24 @@
             <img src="icon.png" alt="HalalTune Logo" class="filtered-icon auth-logo" onerror="this.src='https://via.placeholder.com/60/ffffff/000000?text=HT'">
             <h2>Welcome</h2>
             <p>Sign in to save your playlists and liked songs across all your devices.</p>
+
+            <!-- Google button -->
             <button id="google-login-btn" class="yt-primary-btn google-btn">
                 <i class="fa-brands fa-google"></i> Continue with Google
             </button>
+
+            <!-- Divider -->
+            <div class="auth-divider"><span>or</span></div>
+
+            <!-- Email / Password form -->
+            <div id="email-auth-form">
+                <input type="email" id="auth-email" class="auth-input" placeholder="Email address" autocomplete="email">
+                <input type="password" id="auth-password" class="auth-input" placeholder="Password" autocomplete="current-password">
+                <p id="auth-error" class="auth-error" style="display:none;"></p>
+                <button id="email-signin-btn" class="yt-primary-btn" style="margin-bottom:10px;">Sign In</button>
+                <button id="email-signup-btn" class="auth-link-btn">Create account</button>
+                <button id="forgot-password-btn" class="auth-link-btn">Forgot password?</button>
+            </div>
         </div>
     </div>
 
@@ -331,6 +346,20 @@
 
             <h3>12. Contact</h3>
             <p>For questions regarding these Terms of Service, please use the Help &amp; Feedback option in the app.</p>
+        </div>
+    </div>
+
+    <!-- HISTORY PAGE -->
+    <div id="history-page" class="legal-page" style="display:none;">
+        <div class="legal-header">
+            <button class="legal-back-btn" id="history-back-btn"><i class="fa-solid fa-arrow-left"></i></button>
+            <h2>History</h2>
+            <button id="history-clear-btn" class="history-clear-btn" title="Clear history">
+                <i class="fa-solid fa-trash-can"></i>
+            </button>
+        </div>
+        <div id="history-list-container" class="history-list">
+            <p class="history-empty">Loading history...</p>
         </div>
     </div>
 
