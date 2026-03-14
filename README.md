@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="icon.png" alt="HalalTune Logo" width="120" style="filter: brightness(0) invert(1);">
+  <img src="icon.png" alt="HalalTune Logo" width="120">
   
   <h1>HalalTune 🎧</h1>
   <p><em>Premium Spiritual Audio, curated for your soul.</em></p>
@@ -56,12 +56,3 @@ Built with a premium **Pitch Black Monochrome (OLED-friendly)** aesthetic inspir
 | <img src="docs/1.jpg" width="250"> | <img src="docs/2.jpg" width="250"> | <img src="docs/3.jpg" width="250"> | <img src="docs/4.jpg" width="250"> |
 
 ---
-
-## 🚀 Getting Started
-
-To run this project locally or deploy it yourself, follow these steps:
-
-### 1. Clone the Repository
-```bash
-git clone [https://github.com/yourusername/halaltune.git](https://github.com/yourusername/halaltune.git)
-cd halaltune
