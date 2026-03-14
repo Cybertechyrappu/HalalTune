@@ -2,128 +2,202 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>HalalTune</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>HalalTune | Premium Halal Audio</title>
+    
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#000000">
+    <link rel="apple-touch-icon" href="appicon.png">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    
+    <link rel="icon" href="icon.png">
     <link rel="stylesheet" href="style.css">
+
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
 
     <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore-compat.js"></script>
 </head>
 <body>
+    
+    <div id="intro-screen" class="fullscreen-view">
+        <div class="intro-content">
+            <img src="icon.png" alt="HalalTune Logo" class="filtered-icon intro-logo" onerror="this.src='https://via.placeholder.com/120/ffffff/000000?text=HT'">
+            <h1 class="intro-title">HalalTune</h1>
+            <p class="intro-description">Pure, distraction-free Islamic audio.</p>
+            <button id="get-started-btn" class="yt-primary-btn">Get Started</button>
+        </div>
+    </div>
 
-    <div id="auth-screen" class="fullscreen-view">
+    <div id="auth-screen" class="fullscreen-view" style="display: none; opacity: 0;">
         <div class="auth-box">
-            <h2>HalalTune</h2>
-            <p>Sign in to continue</p>
+            <img src="icon.png" alt="HalalTune Logo" class="filtered-icon auth-logo" onerror="this.src='https://via.placeholder.com/60/ffffff/000000?text=HT'">
+            <h2>Welcome</h2>
+            <p>Sign in to save your playlists and liked songs across all your devices.</p>
+            
             <button id="google-login-btn" class="yt-primary-btn google-btn">
                 <i class="fa-brands fa-google"></i> Continue with Google
             </button>
         </div>
     </div>
 
-    <div id="app-layout" class="yt-app-layout" style="display: none;">
+    <div id="app-main" class="yt-app-layout" style="display: none; opacity: 0;">
         
-        <div class="yt-main-content">
-            <div class="yt-topbar">
-                <div class="glass-search-wrapper">
-                    <i class="fa-solid fa-search search-icon"></i>
-                    <input type="text" id="glass-search" class="glass-search-bar" placeholder="Search nasheeds, artists...">
+        <!-- Desktop Sidebar -->
+        <aside class="yt-sidebar">
+            <div class="yt-sidebar-header">
+                <img src="icon.png" alt="Logo" class="filtered-icon yt-logo-small">
+                <h2>HalalTune</h2>
+            </div>
+            <nav class="yt-nav-links">
+                <button class="yt-nav-btn active" data-tab="all"><i class="fa-solid fa-house"></i> Home</button>
+                <button class="yt-nav-btn" data-tab="malayalam"><i class="fa-solid fa-music"></i> Malayalam</button>
+                <button class="yt-nav-btn" data-tab="liked"><i class="fa-solid fa-heart"></i> Liked Songs</button>
+            </nav>
+            <div class="yt-sidebar-bottom">
+                <button id="logout-btn-desktop" class="yt-nav-btn"><i class="fa-solid fa-arrow-right-from-bracket"></i> Sign Out</button>
+            </div>
+        </aside>
+
+        <main class="yt-main-content">
+            
+            <!-- Top Header with Glass Search -->
+            <header class="yt-topbar">
+                <div class="yt-mobile-brand">
+                    <img src="icon.png" alt="Logo" class="filtered-icon yt-logo-small">
+                    <h2>HalalTune</h2>
                 </div>
-                <button id="logout-btn" class="yt-icon-btn"><i class="fa-solid fa-right-from-bracket"></i></button>
+                
+                <!-- Glass Search Bar -->
+                <div class="glass-search-container">
+                    <i class="fa-solid fa-magnifying-glass search-icon"></i>
+                    <input type="text" id="search-input" class="yt-search-input" placeholder="Search songs, artists...">
+                </div>
+
+                <button id="logout-btn-mobile" class="yt-icon-btn mobile-only"><i class="fa-solid fa-arrow-right-from-bracket"></i></button>
+            </header>
+
+            <!-- Liquid Glass Bubble Navbar (mobile top nav) -->
+            <div class="liquid-nav-container">
+                <div class="liquid-nav" id="liquid-nav">
+                    <div class="liquid-nav-bubble" id="liquid-bubble"></div>
+                    <button class="liquid-nav-btn active" data-tab="all">All Songs</button>
+                    <button class="liquid-nav-btn" data-tab="malayalam">Malayalam</button>
+                    <button class="liquid-nav-btn" data-tab="liked">Liked Songs</button>
+                </div>
             </div>
 
             <div class="yt-content-area">
-                
-                <div class="yt-nav-tabs">
-                    <div class="nav-bubble" id="nav-bubble"></div>
-                    <button class="nav-tab active" onclick="switchTab(0, 'all')">All Songs</button>
-                    <button class="nav-tab" onclick="switchTab(1, 'malayalam')">Malayalam</button>
-                    <button class="nav-tab" onclick="switchTab(2, 'liked')">Liked</button>
+                <!-- Malayalam Section Header (shown when viewing 'all') -->
+                <div id="malayalam-section-header" class="section-header" style="display:none;">
+                    <div class="section-title-row">
+                        <h2 class="section-heading"><span class="section-dot"></span>Malayalam</h2>
+                        <button class="section-see-all" id="see-all-malayalam">See All</button>
+                    </div>
                 </div>
+                <div id="malayalam-track-list" class="yt-track-list section-track-list" style="display:none;"></div>
                 
-                <div class="yt-track-list" id="main-track-list"><p style="color: #aaa; text-align: center; margin-top: 20px;">Loading...</p></div>
-                <div class="yt-track-list" id="malayalam-track-list" style="display: none;"><p style="color: #aaa; text-align: center; margin-top: 20px;">Loading Malayalam...</p></div>
-                <div class="yt-track-list" id="liked-track-list" style="display: none;"><p style="color: #aaa; text-align: center; margin-top: 20px;">No liked songs yet.</p></div>
+                <!-- All Songs / Main List -->
+                <div id="all-section-header" class="section-header" style="display:none;">
+                    <div class="section-title-row">
+                        <h2 class="section-heading"><span class="section-dot"></span>All Songs</h2>
+                    </div>
+                </div>
+                <div id="track-list" class="yt-track-list">
+                    <p style="text-align: center; color: #aaa; margin-top: 40px;">Loading library...</p>
+                </div>
             </div>
 
-            <div class="yt-bottom-player" id="mini-player">
-                <div class="yt-player-progress-container">
-                    <input type="range" id="mini-progress" class="yt-slider" value="0" min="0" max="100">
-                </div>
-                
-                <div class="yt-player-content">
-                    <div class="yt-player-info" id="mini-player-info">
-                        <div class="yt-player-art"><img id="mini-player-art" src="" style="display:none;"></div>
-                        <div class="yt-player-text">
-                            <h4 id="mini-player-title">No track playing</h4>
-                            <p id="mini-player-artist">-</p>
-                        </div>
-                    </div>
-                    <div class="yt-player-controls">
-                        <button class="yt-ctrl-play" id="mini-play-pause-btn"><i class="fa-solid fa-play"></i></button>
-                        <button class="yt-ctrl-btn" id="mini-next-btn"><i class="fa-solid fa-forward-step"></i></button>
-                    </div>
-                </div>
-            </div>
-        </div>
+        </main>
     </div>
 
-    <div class="fs-player" id="fs-player">
-        <div class="fs-header">
-            <button class="fs-icon-btn" id="close-fs-btn"><i class="fa-solid fa-chevron-down"></i></button>
-            <div class="fs-tabs-top">
-                <span class="fs-tab active">Song</span>
-                <span class="fs-tab">Video</span>
-            </div>
-            <button class="fs-icon-btn"><i class="fa-solid fa-ellipsis-vertical"></i></button>
+    <footer class="yt-bottom-player" id="mini-player">
+        <div class="yt-player-progress-container">
+            <input type="range" id="progress-bar" class="yt-slider" value="0" max="100">
         </div>
 
-        <div class="fs-main-area" id="fs-swipe-area">
-            <div class="fs-art-wrapper">
-                <img id="fs-art" src="" style="display:none;">
-                <i class="fa-solid fa-music fs-art-placeholder" id="fs-placeholder"></i>
-            </div>
-        </div>
-
-        <div class="fs-bottom-section">
-            <div class="fs-track-info-row">
-                <div class="fs-info-text">
-                    <h2 id="fs-title">Song Title</h2>
-                    <p id="fs-artist">Artist Name</p>
+        <div class="yt-player-content">
+            <div class="yt-player-info">
+                <div class="yt-player-art" id="player-art">
+                    <i class="fa-solid fa-music"></i>
                 </div>
-                <div class="fs-action-icons">
-                    <button class="fs-icon-action"><i class="fa-regular fa-thumbs-down"></i></button>
-                    <button class="fs-like-btn" id="fs-like-btn"><i class="fa-regular fa-thumbs-up"></i></button>
+                <div class="yt-player-text">
+                    <h4 id="player-title">No track selected</h4>
+                    <p id="player-artist">--</p>
                 </div>
-            </div>
-
-            <div class="fs-progress-wrapper">
-                <input type="range" id="fs-progress" class="yt-slider fs-slider" value="0" min="0" max="100">
-                <div class="fs-time-row">
-                    <span id="fs-time-current">0:00</span>
-                    <span id="fs-time-total">0:00</span>
-                </div>
-            </div>
-
-            <div class="fs-controls-main">
-                <button class="fs-secondary-control"><i class="fa-solid fa-shuffle"></i></button>
-                <button class="fs-main-control" id="fs-prev-btn"><i class="fa-solid fa-backward-step"></i></button>
-                <button class="fs-play-circle" id="fs-play-pause-btn"><i class="fa-solid fa-play"></i></button>
-                <button class="fs-main-control" id="fs-next-btn"><i class="fa-solid fa-forward-step"></i></button>
-                <button class="fs-secondary-control"><i class="fa-solid fa-repeat"></i></button>
             </div>
             
-            <div class="fs-bottom-tabs">
-                <span>UP NEXT</span>
-                <span>LYRICS</span>
-                <span>RELATED</span>
+            <div class="yt-player-controls">
+                <button id="desk-prev-btn" class="yt-ctrl-btn desktop-only"><i class="fa-solid fa-backward-step"></i></button>
+                <button id="play-btn" class="yt-ctrl-play"><i class="fa-solid fa-play"></i></button>
+                <button id="desk-next-btn" class="yt-ctrl-btn"><i class="fa-solid fa-forward-step"></i></button>
             </div>
+        </div>
+    </footer>
+
+    <div id="full-screen-player" class="fs-player">
+        <div class="fs-header">
+            <button id="close-fs-btn" class="fs-icon-btn"><i class="fa-solid fa-chevron-down"></i></button>
+            <button class="fs-icon-btn" id="fs-menu-btn"><i class="fa-solid fa-ellipsis-vertical"></i></button>
+        </div>
+
+        <div class="fs-main-area">
+            <div id="fs-artwork-view" class="fs-art-wrapper">
+                <div id="fs-player-art" class="fs-art-placeholder">
+                    <i class="fa-solid fa-music"></i>
+                </div>
+            </div>
+
+            <div id="fs-tab-content-view" class="fs-tab-content-wrapper" style="display: none;">
+                <div id="fs-queue-view" class="fs-scrollable-content" style="display: none;"></div>
+                <div id="fs-lyrics-view" class="fs-scrollable-content" style="display: none;"></div>
+                <div id="fs-related-view" class="fs-scrollable-content" style="display: none;"></div>
+            </div>
+        </div>
+
+        <div class="fs-track-details">
+            <div class="fs-info">
+                <h2 id="fs-player-title">No track selected</h2>
+                <p id="fs-player-artist">--</p>
+            </div>
+            <button class="fs-like-btn" id="fs-like-btn"><i class="fa-regular fa-heart"></i></button>
+        </div>
+
+        <div class="fs-progress-wrapper">
+            <input type="range" id="fs-progress-bar" class="yt-slider" value="0" max="100">
+            <div class="fs-time-row">
+                <span id="fs-current-time">0:00</span>
+                <span id="fs-total-time">0:00</span>
+            </div>
+        </div>
+
+        <div class="fs-controls">
+            <button id="fs-shuffle-btn" class="fs-secondary-control"><i class="fa-solid fa-shuffle"></i></button>
+            <button id="fs-prev-btn" class="fs-main-control"><i class="fa-solid fa-backward-step"></i></button>
+            <button id="fs-play-btn" class="fs-play-circle"><i class="fa-solid fa-play"></i></button>
+            <button id="fs-next-btn" class="fs-main-control"><i class="fa-solid fa-forward-step"></i></button>
+            <button id="fs-repeat-btn" class="fs-secondary-control"><i class="fa-solid fa-repeat"></i></button>
+        </div>
+
+        <div class="fs-bubble-tabs">
+            <button class="fs-bubble-btn" data-target="queue">Up Next</button>
+            <button class="fs-bubble-btn" data-target="lyrics">Lyrics</button>
+            <button class="fs-bubble-btn" data-target="related">Related</button>
         </div>
     </div>
 
-    <audio id="main-audio" style="display: none;"></audio>
+    <div id="options-modal" class="options-overlay" style="display: none;">
+        <div class="options-content">
+            <button id="opt-download-btn"><i class="fa-solid fa-download"></i> Download Track</button>
+            <button id="opt-share-btn"><i class="fa-solid fa-share-nodes"></i> Share Track</button>
+            <button id="opt-close-btn" style="color: #ff4d4d;"><i class="fa-solid fa-xmark"></i> Cancel</button>
+        </div>
+    </div>
+
+    <audio id="audio-element" src=""></audio>
     <script src="script.js"></script>
 </body>
 </html>
