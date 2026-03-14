@@ -44,20 +44,58 @@ const CATEGORIES = [
     { key: 'urdu',      label: 'Urdu'     },
     { key: 'others',    label: 'Others'   },
 ];
-const PREVIEW_COUNT = 5;
-const RECENTS_MAX   = 8;   // max recent songs stored
+const PREVIEW_COUNT   = 5;
+let speedDialPicks = [];   // shuffled once per page load, set when tracks are fetched
+const RECENTS_MAX   = 8;    // max shown in Recents strip
+const HISTORY_MAX   = 50;   // max stored in Firestore history
 
-// Recent track IDs stored in localStorage (most-recent first)
+// In-memory history array — [{id, playedAt}] most-recent first
+// Loaded from Firestore on login, cleared on logout
+let historyList = [];
+
+// Save a play to Firestore + update in-memory list
+async function addToHistory(trackId) {
+    const entry = { id: trackId, playedAt: Date.now() };
+
+    // Update in-memory list (deduplicate, keep newest first)
+    historyList = historyList.filter(e => e.id !== trackId);
+    historyList.unshift(entry);
+    if (historyList.length > HISTORY_MAX) historyList = historyList.slice(0, HISTORY_MAX);
+
+    // Persist to Firestore if signed in
+    if (auth.currentUser) {
+        const uid = auth.currentUser.uid;
+        db.collection('users').doc(uid).collection('history').doc(trackId).set({
+            trackId,
+            playedAt: firebase.firestore.FieldValue.serverTimestamp()
+        }).catch(() => {});
+    }
+}
+
+// Load history from Firestore into memory
+async function loadHistoryFromFirestore(uid) {
+    try {
+        const snap = await db.collection('users').doc(uid).collection('history')
+            .orderBy('playedAt', 'desc')
+            .limit(HISTORY_MAX)
+            .get();
+        historyList = snap.docs.map(doc => ({
+            id:       doc.data().trackId,
+            playedAt: doc.data().playedAt?.toMillis?.() || 0
+        }));
+    } catch { historyList = []; }
+}
+
+// Recent IDs for the home strip (first RECENTS_MAX from history)
 function getRecentIds() {
-    try { return JSON.parse(localStorage.getItem('ht_recents') || '[]'); }
-    catch { return []; }
+    return historyList.slice(0, RECENTS_MAX).map(e => e.id);
 }
-function addToRecents(trackId) {
-    let ids = getRecentIds().filter(id => id !== trackId); // remove dupe
-    ids.unshift(trackId);                                   // add to front
-    if (ids.length > RECENTS_MAX) ids = ids.slice(0, RECENTS_MAX);
-    localStorage.setItem('ht_recents', JSON.stringify(ids));
+// Full history IDs (up to HISTORY_MAX)
+function getHistoryIds() {
+    return historyList.map(e => e.id);
 }
+// Keep addToRecents as alias so existing call in playTrack still works
+function addToRecents(trackId) { addToHistory(trackId); }
 
 let localUserId = localStorage.getItem('halaltune_uid');
 if (!localUserId) {
@@ -91,7 +129,10 @@ auth.onAuthStateChanged(user => {
         });
         fetchAllTracks();
         populateProfileUI(user);
+        loadHistoryFromFirestore(user.uid).then(() => renderCurrentView());
     } else {
+        // Clear in-memory history on logout so it's never stale
+        historyList = [];
         appMain.style.display    = 'none';
         authScreen.style.display = 'none';
         introScreen.style.display = 'flex';
@@ -107,19 +148,131 @@ document.getElementById('get-started-btn').addEventListener('click', () => {
     }});
 });
 
+// Handle redirect result first (fires after Google redirects back to the app)
+auth.getRedirectResult().then(result => {
+    // result.user is non-null if we just came back from a redirect — onAuthStateChanged handles the rest
+}).catch(err => {
+    if (err.code !== 'auth/no-current-user') {
+        console.error('Redirect sign-in error:', err);
+    }
+});
+
 document.getElementById('google-login-btn').addEventListener('click', () => {
     if (window.AndroidBridge && window.AndroidBridge.loginWithGoogle) {
+        // Native Android bridge (HalalTune APK)
         window.AndroidBridge.loginWithGoogle();
-    } else {
-        const provider = new firebase.auth.GoogleAuthProvider();
-        auth.signInWithPopup(provider).catch(err => alert('Login Failed: ' + err.message));
+        return;
     }
+
+    const btn = document.getElementById('google-login-btn');
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Signing in...';
+
+    const provider = new firebase.auth.GoogleAuthProvider();
+    provider.addScope('email');
+    provider.addScope('profile');
+
+    // Try popup first (works in real browsers + Firebase Hosting preview).
+    // If the environment blocks popups (Spck webview, iframe, etc.),
+    // automatically fall back to redirect — page reloads and
+    // getRedirectResult() above catches the result.
+    auth.signInWithPopup(provider).catch(err => {
+        const blockedCodes = [
+            'auth/popup-blocked',
+            'auth/popup-closed-by-user',
+            'auth/cancelled-popup-request',
+            'auth/operation-not-supported-in-this-environment',
+            'auth/web-storage-unsupported',
+        ];
+        if (blockedCodes.includes(err.code)) {
+            // Show redirect message before the page navigates away
+            btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Redirecting...';
+            auth.signInWithRedirect(provider).catch(e => {
+                btn.disabled = false;
+                btn.innerHTML = '<i class="fa-brands fa-google"></i> Continue with Google';
+                alert('Login failed: ' + e.message);
+            });
+        } else {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fa-brands fa-google"></i> Continue with Google';
+            alert('Login failed: ' + err.message);
+        }
+    });
 });
 
 window.firebaseNativeLogin = function(idToken) {
     const credential = firebase.auth.GoogleAuthProvider.credential(idToken);
     auth.signInWithCredential(credential).catch(err => alert('Authentication Failed: ' + err.message));
 };
+
+// ==========================================
+// EMAIL / PASSWORD AUTH (works in all envs)
+// ==========================================
+function setAuthError(msg) {
+    const el = document.getElementById('auth-error');
+    if (!el) return;
+    el.innerText = msg;
+    el.style.display = msg ? 'block' : 'none';
+}
+
+document.getElementById('email-signin-btn')?.addEventListener('click', async () => {
+    const email = document.getElementById('auth-email')?.value.trim();
+    const pass  = document.getElementById('auth-password')?.value;
+    if (!email || !pass) { setAuthError('Please enter your email and password.'); return; }
+    const btn = document.getElementById('email-signin-btn');
+    btn.disabled = true;
+    btn.innerText = 'Signing in...';
+    setAuthError('');
+    try {
+        await auth.signInWithEmailAndPassword(email, pass);
+    } catch (err) {
+        const messages = {
+            'auth/user-not-found':   'No account found with this email.',
+            'auth/wrong-password':   'Incorrect password.',
+            'auth/invalid-email':    'Please enter a valid email address.',
+            'auth/too-many-requests':'Too many attempts. Please try again later.',
+            'auth/invalid-credential': 'Incorrect email or password.',
+        };
+        setAuthError(messages[err.code] || err.message);
+    }
+    btn.disabled = false;
+    btn.innerText = 'Sign In';
+});
+
+document.getElementById('email-signup-btn')?.addEventListener('click', async () => {
+    const email = document.getElementById('auth-email')?.value.trim();
+    const pass  = document.getElementById('auth-password')?.value;
+    if (!email || !pass) { setAuthError('Please enter an email and password.'); return; }
+    if (pass.length < 6) { setAuthError('Password must be at least 6 characters.'); return; }
+    const btn = document.getElementById('email-signup-btn');
+    btn.disabled = true;
+    btn.innerText = 'Creating account...';
+    setAuthError('');
+    try {
+        await auth.createUserWithEmailAndPassword(email, pass);
+    } catch (err) {
+        const messages = {
+            'auth/email-already-in-use': 'An account already exists with this email.',
+            'auth/invalid-email':        'Please enter a valid email address.',
+            'auth/weak-password':        'Password is too weak. Use at least 6 characters.',
+        };
+        setAuthError(messages[err.code] || err.message);
+    }
+    btn.disabled = false;
+    btn.innerText = 'Create account';
+});
+
+document.getElementById('forgot-password-btn')?.addEventListener('click', async () => {
+    const email = document.getElementById('auth-email')?.value.trim();
+    if (!email) { setAuthError('Enter your email address above first.'); return; }
+    try {
+        await auth.sendPasswordResetEmail(email);
+        setAuthError('');
+        alert('Password reset email sent! Check your inbox.');
+    } catch (err) {
+        setAuthError(err.message);
+    }
+});
 
 const logout = () => auth.signOut();
 document.getElementById('logout-btn-desktop')?.addEventListener('click', logout);
@@ -183,9 +336,87 @@ document.getElementById('pm-switch-btn')?.addEventListener('click', () => {
 
 document.getElementById('pm-history-btn')?.addEventListener('click', () => {
     closeProfileModal();
-    // Switch to Home tab which shows Recents
-    setTimeout(() => setActiveTab('all'), 300);
+    setTimeout(() => openHistoryPage(), 300);
 });
+
+function openHistoryPage() {
+    const page = document.getElementById('history-page');
+    if (!page) return;
+    renderHistoryPage();
+    page.style.display = 'flex';
+    requestAnimationFrame(() => page.classList.add('legal-open'));
+}
+
+function closeHistoryPage() {
+    const page = document.getElementById('history-page');
+    if (!page) return;
+    page.classList.remove('legal-open');
+    setTimeout(() => { page.style.display = 'none'; }, 300);
+}
+
+function renderHistoryPage() {
+    const container = document.getElementById('history-list-container');
+    if (!container) return;
+    container.innerHTML = '';
+
+    const ids = getHistoryIds();
+    if (ids.length === 0) {
+        container.innerHTML = '<p class="history-empty">No listening history yet. Play a song to get started.</p>';
+        return;
+    }
+
+    const tracks = ids
+        .map(id => allTracks.find(t => t.id === id))
+        .filter(Boolean);
+
+    if (tracks.length === 0) {
+        container.innerHTML = '<p class="history-empty">No tracks found in your history.</p>';
+        return;
+    }
+
+    tracks.forEach((track, index) => {
+        const isPlaying = currentQueue.length > 0 &&
+                          currentQueue[currentTrackIndex] &&
+                          currentQueue[currentTrackIndex].id === track.id;
+
+        const item = document.createElement('div');
+        item.className = 'history-item' + (isPlaying ? ' history-item-active' : '');
+
+        const artHtml = track.coverArt
+            ? `<img src="${track.coverArt}" class="history-item-art" loading="lazy">`
+            : `<div class="history-item-art history-item-art-fallback"><i class="fa-solid fa-music"></i></div>`;
+
+        const catKey   = getCategory(track);
+        const catMeta  = CATEGORIES.find(c => c.key === catKey);
+        const badgeHtml = catMeta
+            ? `<span class="history-lang-badge history-lang-${catKey}">${catMeta.label}</span>`
+            : '';
+
+        item.innerHTML = `
+            ${artHtml}
+            <div class="history-item-meta">
+                <span class="history-item-title">${escHtml(track.title)}</span>
+                <span class="history-item-artist">${escHtml(track.artist)}</span>
+                ${badgeHtml}
+            </div>
+            <div class="history-item-actions">
+                <i class="fa-solid ${isPlaying ? 'fa-pause' : 'fa-play'} history-play-icon"></i>
+            </div>`;
+
+        item.addEventListener('click', () => {
+            // Play from full history queue
+            currentQueue      = [...tracks];
+            currentTrackIndex = index;
+            playTrack();
+            // Update active state in history list
+            document.querySelectorAll('.history-item').forEach(el => el.classList.remove('history-item-active'));
+            item.classList.add('history-item-active');
+            item.querySelector('.history-play-icon').className = 'fa-solid fa-pause history-play-icon';
+        });
+
+        container.appendChild(item);
+    });
+}
 
 document.getElementById('pm-help-btn')?.addEventListener('click', () => {
     closeProfileModal();
@@ -195,27 +426,125 @@ document.getElementById('pm-help-btn')?.addEventListener('click', () => {
 // Privacy & Terms pages
 document.getElementById('pm-privacy-btn')?.addEventListener('click', () => {
     closeProfileModal();
-    setTimeout(() => {
-        document.getElementById('privacy-page').style.display = 'flex';
-        requestAnimationFrame(() => document.getElementById('privacy-page').classList.add('legal-open'));
-    }, 300);
+    setTimeout(() => openPrivacyPage(), 300);
 });
 document.getElementById('pm-terms-btn')?.addEventListener('click', () => {
     closeProfileModal();
-    setTimeout(() => {
-        document.getElementById('terms-page').style.display = 'flex';
-        requestAnimationFrame(() => document.getElementById('terms-page').classList.add('legal-open'));
-    }, 300);
+    setTimeout(() => openTermsPage(), 300);
 });
-document.getElementById('privacy-back-btn')?.addEventListener('click', () => {
+
+document.getElementById('history-back-btn')?.addEventListener('click', closeHistoryPage);
+
+// ==========================================
+// HARDWARE / BROWSER BACK BUTTON STACK
+// ==========================================
+// We push a fake state whenever we open a page/modal so that the Android
+// back button (popstate) can close it instead of leaving the app.
+const PAGE_STACK = [];   // tracks what is currently "open" on top
+
+function pushBackStack(name, closeFn) {
+    PAGE_STACK.push({ name, closeFn });
+    history.pushState({ htPage: name }, '');
+}
+
+function popBackStack() {
+    PAGE_STACK.pop();
+}
+
+window.addEventListener('popstate', (e) => {
+    if (PAGE_STACK.length > 0) {
+        const top = PAGE_STACK[PAGE_STACK.length - 1];
+        top.closeFn();          // close the topmost thing
+        PAGE_STACK.pop();
+        // Don't let the browser actually navigate — push state again so the
+        // back button works for any remaining layers
+        if (PAGE_STACK.length > 0) {
+            history.pushState({ htPage: PAGE_STACK[PAGE_STACK.length - 1].name }, '');
+        }
+    }
+    // If nothing is open, the back press does nothing extra (correct behaviour)
+});
+
+// ── Patch open/close functions to push/pop the stack ──────────────────────────
+
+// Wrap openHistoryPage
+const _origOpenHistory = openHistoryPage;
+openHistoryPage = function() {
+    _origOpenHistory();
+    pushBackStack('history', closeHistoryPage);
+};
+// Wrap closeHistoryPage
+const _origCloseHistory = closeHistoryPage;
+closeHistoryPage = function() {
+    _origCloseHistory();
+    // popBackStack already called by popstate handler if triggered by back button;
+    // if triggered by the UI back button we pop here too (duplicate-safe via filter)
+    PAGE_STACK.filter((_, i, arr) => arr.length - 1 === i && arr[i].name === 'history')
+              .forEach(() => PAGE_STACK.pop());
+};
+
+// Wrap openProfileModal
+const _origOpenProfile = openProfileModal;
+openProfileModal = function() {
+    _origOpenProfile();
+    pushBackStack('profile', closeProfileModal);
+};
+const _origCloseProfile = closeProfileModal;
+closeProfileModal = function() {
+    _origCloseProfile();
+    PAGE_STACK.filter((_, i, arr) => arr.length - 1 === i && arr[i].name === 'profile')
+              .forEach(() => PAGE_STACK.pop());
+};
+
+// Privacy page
+document.getElementById('pm-privacy-btn')?.removeEventListener('click', null); // already wired below
+function openPrivacyPage() {
+    const el = document.getElementById('privacy-page');
+    el.style.display = 'flex';
+    requestAnimationFrame(() => el.classList.add('legal-open'));
+    pushBackStack('privacy', closePrivacyPage);
+}
+function closePrivacyPage() {
     const el = document.getElementById('privacy-page');
     el.classList.remove('legal-open');
     setTimeout(() => { el.style.display = 'none'; }, 300);
-});
-document.getElementById('terms-back-btn')?.addEventListener('click', () => {
+    PAGE_STACK.filter((_, i, arr) => arr.length - 1 === i && arr[i].name === 'privacy')
+              .forEach(() => PAGE_STACK.pop());
+}
+
+// Terms page
+function openTermsPage() {
+    const el = document.getElementById('terms-page');
+    el.style.display = 'flex';
+    requestAnimationFrame(() => el.classList.add('legal-open'));
+    pushBackStack('terms', closeTermsPage);
+}
+function closeTermsPage() {
     const el = document.getElementById('terms-page');
     el.classList.remove('legal-open');
     setTimeout(() => { el.style.display = 'none'; }, 300);
+    PAGE_STACK.filter((_, i, arr) => arr.length - 1 === i && arr[i].name === 'terms')
+              .forEach(() => PAGE_STACK.pop());
+}
+
+// Rewire existing button handlers to use new named functions
+document.getElementById('privacy-back-btn')?.addEventListener('click', closePrivacyPage);
+document.getElementById('terms-back-btn')?.addEventListener('click',   closeTermsPage);
+
+document.getElementById('history-clear-btn')?.addEventListener('click', async () => {
+    if (!confirm('Clear your entire listening history?')) return;
+    historyList = [];
+    if (auth.currentUser) {
+        // Delete all history docs in a batch
+        try {
+            const snap = await db.collection('users').doc(auth.currentUser.uid).collection('history').get();
+            const batch = db.batch();
+            snap.docs.forEach(doc => batch.delete(doc.ref));
+            await batch.commit();
+        } catch { /* fail silently */ }
+    }
+    renderHistoryPage();
+    renderCurrentView(); // refresh Recents strip on Home tab
 });
 
 // ==========================================
@@ -278,6 +607,8 @@ async function fetchAllTracks() {
     try {
         const snapshot = await db.collection('songs').orderBy('createdAt', 'desc').get();
         allTracks = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        // Compute speed dial picks once per session (random shuffle, changes on each page open)
+        speedDialPicks = computeSpeedDialPicks();
         renderCurrentView();
         initLiquidNav();
     } catch (err) {
@@ -367,13 +698,31 @@ function syncCardHighlights(playingTrackId) {
     });
 }
 
+// Builds a random selection of up to 9 tracks for the Speed Dial.
+// Called once per page load so the grid stays stable during a session
+// but shows a fresh shuffle every time the user reopens the app.
+function computeSpeedDialPicks() {
+    // Prefer tracks that have cover art; fall back to everything if too few
+    let pool = allTracks.filter(t => t.coverArt);
+    if (pool.length < 3) pool = [...allTracks];
+
+    // Weighted shuffle: bias toward higher-streamed tracks so popular songs
+    // appear more often, but any track can show up.
+    // Assign each track a random score multiplied by its relative popularity.
+    const maxStreams = Math.max(...pool.map(t => t.streamCount || 0), 1);
+    const weighted = pool.map(t => ({
+        track: t,
+        // score = random (0–1) boosted by how popular the track is (0–1 range)
+        score: Math.random() * 0.6 + ((t.streamCount || 0) / maxStreams) * 0.4
+    }));
+    weighted.sort((a, b) => b.score - a.score);
+    return weighted.slice(0, 9).map(w => w.track);
+}
+
 // ---------- SPEED DIAL (top of home) ----------
 function renderSpeedDial(area) {
-    // Use up to 9 most-streamed tracks that have cover art; fall back to any tracks
-    let pool = allTracks.filter(t => t.coverArt);
-    if (pool.length < 3) pool = [...allTracks]; // include tracks without art if needed
-    // Sort by streamCount desc, take first 9
-    const picks = [...pool].sort((a, b) => (b.streamCount || 0) - (a.streamCount || 0)).slice(0, 9);
+    // Use the pre-computed session picks (shuffled once on page load)
+    const picks = speedDialPicks.length > 0 ? speedDialPicks : computeSpeedDialPicks();
     if (picks.length === 0) return;
 
     const section = document.createElement('div');
@@ -867,19 +1216,25 @@ const viewRelated    = document.getElementById('fs-related-view');
 const miniPlayer     = document.getElementById('mini-player');
 const fsPlayer       = document.getElementById('full-screen-player');
 
+const fsMainArea = document.getElementById('fs-artwork-view')?.closest('.fs-main-area') ||
+                   document.querySelector('.fs-main-area');
+
 bubbleBtns.forEach(btn => {
     btn.addEventListener('click', () => {
         const target = btn.getAttribute('data-target');
         if (btn.classList.contains('active')) {
+            // Closing — go back to artwork
             btn.classList.remove('active');
             fsTabView.style.display  = 'none';
             fsArtView.style.display  = 'flex';
+            fsMainArea?.classList.remove('fs-tabs-active');
             return;
         }
         bubbleBtns.forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
         fsArtView.style.display  = 'none';
-        fsTabView.style.display  = 'block';
+        fsTabView.style.display  = 'flex';   // flex so children can use flex:1
+        fsMainArea?.classList.add('fs-tabs-active');
         [viewQueue, viewLyrics, viewRelated].forEach(v => v.style.display = 'none');
         if (target === 'queue')   viewQueue.style.display   = 'block';
         if (target === 'lyrics')  viewLyrics.style.display  = 'block';
