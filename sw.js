@@ -6,6 +6,7 @@ const urlsToCache = [
     '/script.js',
     '/icon.png',
     '/appicon.png'
+    '/appleicon.png'
 ];
 
 self.addEventListener('install', event => {
