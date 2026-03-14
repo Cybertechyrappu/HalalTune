@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="icon.png" alt="HalalTune Logo" width="120">
+  <img src="icontrans.png" alt="HalalTune Logo" width="120">
   
   <h1>HalalTune 🎧</h1>
   <p><em>Premium Spiritual Audio, curated for your soul.</em></p>
