@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HalalTune | Admin Center</title>
+    <link rel="icon" href="icon.png">
+    <link rel="stylesheet" href="admin-style.css">
+    
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+
+    <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore-compat.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jsmediatags/3.9.5/jsmediatags.min.js"></script>
+</head>
+<body>
+    
+    <div id="admin-login-screen" class="login-overlay">
+        <div class="login-box">
+            <img src="icon.png" alt="Logo" class="admin-logo">
+            <h2>Admin Access</h2>
+            <input type="email" id="admin-email-input" placeholder="Admin Email">
+            <input type="password" id="admin-pass-input" placeholder="Password">
+            <button id="unlock-btn" class="btn btn-primary">Secure Login</button>
+            <p id="login-error" style="color: #ff4d4d; margin-top: 10px; display: none; font-size: 0.85rem;">Invalid Email or Password</p>
+        </div>
+    </div>
+
+    <div class="admin-container" id="admin-dashboard" style="display: none;">
+        <div class="admin-header">
+            <div style="display: flex; align-items: center; gap: 12px;">
+                <img src="icon.png" alt="Logo" class="admin-logo-small">
+                <h2>HalalTune Admin</h2>
+            </div>
+            <button id="lock-btn" class="btn btn-outline"><i class="fa-solid fa-lock"></i> Sign Out</button>
+        </div>
+
+        <div class="stats-grid">
+            <div class="stat-card">
+                <h4>Total Songs</h4>
+                <h2 id="stat-total-songs">0</h2>
+            </div>
+            <div class="stat-card">
+                <h4>Total Streams</h4>
+                <h2 id="stat-total-streams">0</h2>
+            </div>
+            <div class="stat-card">
+                <h4>Total Listeners</h4>
+                <h2 id="stat-total-listeners">0</h2>
+            </div>
+            <div class="stat-card">
+                <h4>Total Likes</h4>
+                <h2 id="stat-total-likes">0</h2>
+            </div>
+            <div class="stat-card">
+                <h4>Downloads</h4>
+                <h2 id="stat-total-downloads">0</h2>
+            </div>
+            <!-- Reg Users - clickable -->
+            <div class="stat-card stat-card-clickable" id="stat-users-card" title="Click to view registered users">
+                <h4>Reg. Users <i class="fa-solid fa-arrow-up-right-from-square" style="font-size:0.6rem; opacity:0.6;"></i></h4>
+                <h2 id="stat-total-users">0</h2>
+            </div>
+        </div>
+
+        <!-- Batch Upload -->
+        <div id="upload-section" class="card">
+            <h3>Batch Upload Tracks</h3>
+            <p>Select or drop multiple audio files. Metadata will be extracted automatically.</p>
+            
+            <div class="upload-dropzone" id="drop-zone">
+                <i class="fa-solid fa-cloud-arrow-up" style="font-size: 2.5rem; color: #666; margin-bottom: 12px;"></i>
+                <p style="margin-bottom: 0;">Click or drag & drop audio files here</p>
+                <input type="file" id="batch-audio-input" multiple accept="audio/*" style="display: none;">
+                <button id="trigger-upload-btn" class="btn btn-outline" style="margin: 15px auto 0;">Browse Files</button>
+            </div>
+
+            <div id="batch-queue-container" style="display: none; margin-top: 25px;">
+                <h4 style="margin-bottom: 10px; color: #fff;">Upload Queue (<span id="queue-count">0</span>)</h4>
+                
+                <div id="upload-queue" class="admin-song-list" style="max-height: 350px;"></div>
+                
+                <button id="start-batch-btn" class="btn btn-success" style="margin-top: 20px;">
+                    <i class="fa-solid fa-cloud-arrow-up"></i> Start Batch Upload
+                </button>
+            </div>
+        </div>
+
+        <!-- Live Database with tabs -->
+        <div class="card">
+            <h3>Live Database</h3>
+            <p>Monitor live streams or delete tracks permanently.</p>
+
+            <!-- Song section tabs -->
+            <div class="db-tabs">
+                <button class="db-tab active" data-dbtab="all">All Songs</button>
+                <button class="db-tab" data-dbtab="malayalam">Malayalam</button>
+            </div>
+
+            <div class="admin-song-list" id="admin-song-list">
+                <p style="text-align: center; color: #aaa;">Loading database...</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Registered Users Popup Modal -->
+    <div id="users-modal" class="modal-overlay" style="display:none;">
+        <div class="modal-box">
+            <div class="modal-header">
+                <h3><i class="fa-solid fa-users"></i> Registered Users</h3>
+                <button id="close-users-modal" class="modal-close-btn"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="modal-search">
+                <input type="text" id="user-search-input" placeholder="Search by email or name..." class="modal-search-input">
+            </div>
+            <div id="users-list" class="users-list">
+                <p style="text-align:center;color:#aaa;">Loading users...</p>
+            </div>
+            <div class="modal-footer">
+                <span id="users-count-label" style="color:#aaa;font-size:0.85rem;">0 users</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Duplicate Song Popup Modal -->
+    <div id="duplicate-modal" class="modal-overlay" style="display:none;">
+        <div class="modal-box modal-box-sm">
+            <div class="modal-header">
+                <h3><i class="fa-solid fa-triangle-exclamation" style="color:#f59e0b;"></i> Duplicate Detected</h3>
+            </div>
+            <p id="duplicate-msg" style="color:#aaa;font-size:0.9rem;margin:15px 0 20px 0;line-height:1.5;"></p>
+            <div style="display:flex;gap:10px;">
+                <button id="duplicate-delete-btn" class="btn btn-danger" style="flex:1;">Delete Duplicate</button>
+                <button id="duplicate-skip-btn" class="btn btn-outline" style="flex:1;">Skip</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="admin-script.js"></script>
+</body>
+</html>
