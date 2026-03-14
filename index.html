@@ -36,14 +36,16 @@
 
             <div class="yt-content-area">
                 
-                <h2 class="section-title">All Songs</h2>
-                <div class="yt-track-list" id="main-track-list"><p style="color: #aaa;">Loading...</p></div>
-
-                <h2 class="section-title" style="margin-top: 30px;">Malayalam</h2>
-                <div class="yt-track-list" id="malayalam-track-list"><p style="color: #aaa;">Loading...</p></div>
-
-                <h2 class="section-title" style="margin-top: 30px;">Liked Songs</h2>
-                <div class="yt-track-list" id="liked-track-list"><p style="color: #aaa;">No liked songs yet.</p></div>
+                <div class="yt-nav-tabs">
+                    <div class="nav-bubble" id="nav-bubble"></div>
+                    <button class="nav-tab active" onclick="switchTab(0, 'all')">All Songs</button>
+                    <button class="nav-tab" onclick="switchTab(1, 'malayalam')">Malayalam</button>
+                    <button class="nav-tab" onclick="switchTab(2, 'liked')">Liked</button>
+                </div>
+                
+                <div class="yt-track-list" id="main-track-list"><p style="color: #aaa; text-align: center; margin-top: 20px;">Loading...</p></div>
+                <div class="yt-track-list" id="malayalam-track-list" style="display: none;"><p style="color: #aaa; text-align: center; margin-top: 20px;">Loading Malayalam...</p></div>
+                <div class="yt-track-list" id="liked-track-list" style="display: none;"><p style="color: #aaa; text-align: center; margin-top: 20px;">No liked songs yet.</p></div>
             </div>
 
             <div class="yt-bottom-player" id="mini-player">
@@ -60,7 +62,6 @@
                         </div>
                     </div>
                     <div class="yt-player-controls">
-                        <button class="yt-ctrl-btn" id="mini-prev-btn"><i class="fa-solid fa-backward-step"></i></button>
                         <button class="yt-ctrl-play" id="mini-play-pause-btn"><i class="fa-solid fa-play"></i></button>
                         <button class="yt-ctrl-btn" id="mini-next-btn"><i class="fa-solid fa-forward-step"></i></button>
                     </div>
@@ -72,44 +73,57 @@
     <div class="fs-player" id="fs-player">
         <div class="fs-header">
             <button class="fs-icon-btn" id="close-fs-btn"><i class="fa-solid fa-chevron-down"></i></button>
-            <div class="fs-header-title">NOW PLAYING</div>
+            <div class="fs-tabs-top">
+                <span class="fs-tab active">Song</span>
+                <span class="fs-tab">Video</span>
+            </div>
             <button class="fs-icon-btn"><i class="fa-solid fa-ellipsis-vertical"></i></button>
         </div>
 
-        <div class="fs-main-area">
+        <div class="fs-main-area" id="fs-swipe-area">
             <div class="fs-art-wrapper">
                 <img id="fs-art" src="" style="display:none;">
                 <i class="fa-solid fa-music fs-art-placeholder" id="fs-placeholder"></i>
             </div>
         </div>
 
-        <div class="fs-track-details">
-            <div class="fs-info">
-                <h2 id="fs-title">Song Title</h2>
-                <p id="fs-artist">Artist Name</p>
+        <div class="fs-bottom-section">
+            <div class="fs-track-info-row">
+                <div class="fs-info-text">
+                    <h2 id="fs-title">Song Title</h2>
+                    <p id="fs-artist">Artist Name</p>
+                </div>
+                <div class="fs-action-icons">
+                    <button class="fs-icon-action"><i class="fa-regular fa-thumbs-down"></i></button>
+                    <button class="fs-like-btn" id="fs-like-btn"><i class="fa-regular fa-thumbs-up"></i></button>
+                </div>
             </div>
-            <button class="fs-like-btn" id="fs-like-btn"><i class="fa-regular fa-heart"></i></button>
-        </div>
 
-        <div class="fs-progress-wrapper">
-            <input type="range" id="fs-progress" class="yt-slider fs-slider" value="0" min="0" max="100">
-            <div class="fs-time-row">
-                <span id="fs-time-current">0:00</span>
-                <span id="fs-time-total">0:00</span>
+            <div class="fs-progress-wrapper">
+                <input type="range" id="fs-progress" class="yt-slider fs-slider" value="0" min="0" max="100">
+                <div class="fs-time-row">
+                    <span id="fs-time-current">0:00</span>
+                    <span id="fs-time-total">0:00</span>
+                </div>
             </div>
-        </div>
 
-        <div class="fs-controls">
-            <button class="fs-secondary-control"><i class="fa-solid fa-shuffle"></i></button>
-            <button class="fs-main-control" id="fs-prev-btn"><i class="fa-solid fa-backward-step"></i></button>
-            <button class="fs-play-circle" id="fs-play-pause-btn"><i class="fa-solid fa-circle-play"></i></button>
-            <button class="fs-main-control" id="fs-next-btn"><i class="fa-solid fa-forward-step"></i></button>
-            <button class="fs-secondary-control"><i class="fa-solid fa-repeat"></i></button>
+            <div class="fs-controls-main">
+                <button class="fs-secondary-control"><i class="fa-solid fa-shuffle"></i></button>
+                <button class="fs-main-control" id="fs-prev-btn"><i class="fa-solid fa-backward-step"></i></button>
+                <button class="fs-play-circle" id="fs-play-pause-btn"><i class="fa-solid fa-play"></i></button>
+                <button class="fs-main-control" id="fs-next-btn"><i class="fa-solid fa-forward-step"></i></button>
+                <button class="fs-secondary-control"><i class="fa-solid fa-repeat"></i></button>
+            </div>
+            
+            <div class="fs-bottom-tabs">
+                <span>UP NEXT</span>
+                <span>LYRICS</span>
+                <span>RELATED</span>
+            </div>
         </div>
     </div>
 
     <audio id="main-audio" style="display: none;"></audio>
-
     <script src="script.js"></script>
 </body>
 </html>
