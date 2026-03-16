@@ -138,6 +138,7 @@ const authLoadingEl = document.getElementById('auth-loading');
 if (authLoadingEl) authLoadingEl.style.display = 'flex';
 
 let appInitialised = false;  // guard — only run setup once per session
+let _unsubLikes = null; // holds likes onSnapshot unsubscribe fn
 
 auth.onAuthStateChanged(user => {
     // Hide the loading screen whatever happens
@@ -165,15 +166,15 @@ auth.onAuthStateChanged(user => {
         if (!appInitialised) {
             appInitialised = true;
 
-            // Likes listener — real-time
-            db.collection('users').doc(user.uid).collection('likes').onSnapshot(
+            // Likes listener — real-time (stored so we can unsubscribe on logout)
+            _unsubLikes = db.collection('users').doc(user.uid).collection('likes').onSnapshot(
                 snap => {
                     likedSongIds.clear();
                     snap.forEach(doc => likedSongIds.add(doc.id));
                     updateGlobalLikeButtons();
                     renderCurrentView();
                 },
-                () => {}   // ignore permission errors silently
+                () => {}
             );
 
             // Load history then fetch tracks (parallel)
@@ -187,6 +188,10 @@ auth.onAuthStateChanged(user => {
         // ── Logged out ─────────────────────────────────────────────────────
         appInitialised = false;
         historyList    = [];
+        if (_unsubLikes)  { _unsubLikes();  _unsubLikes  = null; }
+        if (_unsubTracks) { _unsubTracks(); _unsubTracks = null; }
+        likedSongIds.clear();
+        allTracks = [];
         appMain.style.display    = 'none';
         authScreen.style.display = 'none';
         introScreen.style.display = 'flex';
@@ -484,6 +489,8 @@ function renderSearchBody(term) {
             body.innerHTML = '<p class="so-empty">No results found</p>';
             return;
         }
+        // Save this term to history when showing results
+        addSearchHistory(term);
         body.innerHTML = '<div class="so-results-label">Results</div>';
         const list = document.createElement('div');
         list.className = 'yt-track-list';
@@ -496,8 +503,9 @@ function applySearchTerm(term, tracks) {
     const t = term.toLowerCase().trim();
     if (!t) return tracks;
     return tracks.filter(tr =>
-        tr.title.toLowerCase().includes(t) ||
-        tr.artist.toLowerCase().includes(t)
+        tr.title.toLowerCase().includes(t)  ||
+        tr.artist.toLowerCase().includes(t) ||
+        (tr.language || '').toLowerCase().includes(t)
     );
 }
 
@@ -534,21 +542,26 @@ document.getElementById('search-clear-btn')?.addEventListener('click', function(
 // PROFILE MODAL
 // ==========================================
 function openProfileModal() {
+    // Prevent duplicate stack entries
+    if (PAGE_STACK.some(e => e.name === 'profile')) return;
     document.getElementById('profile-modal').style.display = 'flex';
     requestAnimationFrame(() => {
         document.getElementById('profile-modal').classList.add('pm-open');
     });
+    pushBackStack('profile', closeProfileModal);
 }
 function closeProfileModal() {
     const el = document.getElementById('profile-modal');
     el.classList.remove('pm-open');
     setTimeout(() => { el.style.display = 'none'; }, 300);
+    const idx = PAGE_STACK.findIndex(e => e.name === 'profile');
+    if (idx !== -1) PAGE_STACK.splice(idx, 1);
 }
 
 // Populate avatar + user info from Firebase user object
 function populateProfileUI(user) {
     const imgHtml = user.photoURL
-        ? `<img src="${user.photoURL}" alt="Profile" onerror="this.parentElement.innerHTML='<i class=\'fa-solid fa-user\'></i>'">`
+        ? `<img src="${escHtml(user.photoURL)}" alt="Profile" onerror="this.parentElement.innerHTML='<i class=fa-solid fa-user></i>'">`
         : '<i class="fa-solid fa-user"></i>';
 
     // Bottom nav avatar
@@ -609,6 +622,9 @@ function openHistoryPage() {
     renderHistoryPage();
     page.style.display = 'flex';
     requestAnimationFrame(() => page.classList.add('legal-open'));
+    // Only push if not already on stack
+    if (!PAGE_STACK.some(e => e.name === 'history'))
+        pushBackStack('history', closeHistoryPage);
 }
 
 function closeHistoryPage() {
@@ -616,6 +632,8 @@ function closeHistoryPage() {
     if (!page) return;
     page.classList.remove('legal-open');
     setTimeout(() => { page.style.display = 'none'; }, 300);
+    const idx = PAGE_STACK.findIndex(e => e.name === 'history');
+    if (idx !== -1) PAGE_STACK.splice(idx, 1);
 }
 
 function renderHistoryPage() {
@@ -715,65 +733,35 @@ function popBackStack() {
     PAGE_STACK.pop();
 }
 
-window.addEventListener('popstate', (e) => {
+window.addEventListener('popstate', () => {
     if (PAGE_STACK.length > 0) {
+        // closeFn already removes its own entry from PAGE_STACK via splice.
+        // We only need to call it — NOT pop again afterwards.
         const top = PAGE_STACK[PAGE_STACK.length - 1];
-        top.closeFn();          // close the topmost thing
-        PAGE_STACK.pop();
-        // Don't let the browser actually navigate — push state again so the
-        // back button works for any remaining layers
+        top.closeFn();
+        // Re-push a state so the back button keeps working for remaining layers
         if (PAGE_STACK.length > 0) {
             history.pushState({ htPage: PAGE_STACK[PAGE_STACK.length - 1].name }, '');
         }
     }
-    // If nothing is open, the back press does nothing extra (correct behaviour)
 });
 
-// ── Patch open/close functions to push/pop the stack ──────────────────────────
-
-// Wrap openHistoryPage
-const _origOpenHistory = openHistoryPage;
-openHistoryPage = function() {
-    _origOpenHistory();
-    pushBackStack('history', closeHistoryPage);
-};
-// Wrap closeHistoryPage
-const _origCloseHistory = closeHistoryPage;
-closeHistoryPage = function() {
-    _origCloseHistory();
-    // popBackStack already called by popstate handler if triggered by back button;
-    // if triggered by the UI back button we pop here too (duplicate-safe via filter)
-    PAGE_STACK.filter((_, i, arr) => arr.length - 1 === i && arr[i].name === 'history')
-              .forEach(() => PAGE_STACK.pop());
-};
-
-// Wrap openProfileModal
-const _origOpenProfile = openProfileModal;
-openProfileModal = function() {
-    _origOpenProfile();
-    pushBackStack('profile', closeProfileModal);
-};
-const _origCloseProfile = closeProfileModal;
-closeProfileModal = function() {
-    _origCloseProfile();
-    PAGE_STACK.filter((_, i, arr) => arr.length - 1 === i && arr[i].name === 'profile')
-              .forEach(() => PAGE_STACK.pop());
-};
+// ── Back-stack helpers — defined here so wraps below can reference them ──────
 
 // Privacy page
-document.getElementById('pm-privacy-btn')?.removeEventListener('click', null); // already wired below
 function openPrivacyPage() {
     const el = document.getElementById('privacy-page');
     el.style.display = 'flex';
     requestAnimationFrame(() => el.classList.add('legal-open'));
-    pushBackStack('privacy', closePrivacyPage);
+    if (!PAGE_STACK.some(e => e.name === 'privacy'))
+        pushBackStack('privacy', closePrivacyPage);
 }
 function closePrivacyPage() {
     const el = document.getElementById('privacy-page');
     el.classList.remove('legal-open');
     setTimeout(() => { el.style.display = 'none'; }, 300);
-    PAGE_STACK.filter((_, i, arr) => arr.length - 1 === i && arr[i].name === 'privacy')
-              .forEach(() => PAGE_STACK.pop());
+    const idx = PAGE_STACK.findIndex(e => e.name === 'privacy');
+    if (idx !== -1) PAGE_STACK.splice(idx, 1);
 }
 
 // Terms page
@@ -781,14 +769,15 @@ function openTermsPage() {
     const el = document.getElementById('terms-page');
     el.style.display = 'flex';
     requestAnimationFrame(() => el.classList.add('legal-open'));
-    pushBackStack('terms', closeTermsPage);
+    if (!PAGE_STACK.some(e => e.name === 'terms'))
+        pushBackStack('terms', closeTermsPage);
 }
 function closeTermsPage() {
     const el = document.getElementById('terms-page');
     el.classList.remove('legal-open');
     setTimeout(() => { el.style.display = 'none'; }, 300);
-    PAGE_STACK.filter((_, i, arr) => arr.length - 1 === i && arr[i].name === 'terms')
-              .forEach(() => PAGE_STACK.pop());
+    const idx = PAGE_STACK.findIndex(e => e.name === 'terms');
+    if (idx !== -1) PAGE_STACK.splice(idx, 1);
 }
 
 // Rewire existing button handlers to use new named functions
@@ -797,9 +786,12 @@ document.getElementById('terms-back-btn')?.addEventListener('click',   closeTerm
 
 document.getElementById('history-clear-btn')?.addEventListener('click', async () => {
     if (!confirm('Clear your entire listening history?')) return;
+    // Immediately clear in-memory and re-render — don't wait for Firestore
     historyList = [];
+    renderHistoryPage();
+    renderCurrentView(); // clears Recents strip instantly
+    // Then delete from Firestore in background
     if (auth.currentUser) {
-        // Delete all history docs in a batch
         try {
             const snap = await db.collection('users').doc(auth.currentUser.uid).collection('history').get();
             const batch = db.batch();
@@ -807,8 +799,6 @@ document.getElementById('history-clear-btn')?.addEventListener('click', async ()
             await batch.commit();
         } catch { /* fail silently */ }
     }
-    renderHistoryPage();
-    renderCurrentView(); // refresh Recents strip on Home tab
 });
 
 // ==========================================
@@ -856,19 +846,18 @@ function setActiveTab(tabName) {
 }
 
 function initLiquidNav() {
-    const liquidBtns = document.querySelectorAll('.liquid-nav-btn');
-    liquidBtns.forEach(btn => {
-        btn.addEventListener('click', () => setActiveTab(btn.getAttribute('data-tab')));
-    });
+    // Wire desktop sidebar nav buttons
     document.querySelectorAll('.yt-nav-btn').forEach(btn => {
         if (btn.id && btn.id.includes('logout')) return;
         btn.addEventListener('click', () => setActiveTab(btn.getAttribute('data-tab')));
     });
-    // Position bottom nav bubble on load
-    setTimeout(() => {
-        const activebn = document.querySelector('.bn-btn.active');
-        if (activebn) updateBnBubble(activebn);
-    }, 150);
+    // Position bottom nav bubble after layout settles
+    requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+            const activebn = document.querySelector('.bn-btn.active');
+            if (activebn) updateBnBubble(activebn);
+        });
+    });
 }
 
 // ==========================================
@@ -877,19 +866,26 @@ function initLiquidNav() {
 const searchInput = document.getElementById('search-input');
 
 let liquidNavReady = false;
-async function fetchAllTracks() {
+let _unsubTracks = null;
+function fetchAllTracks() {
     const area = document.getElementById('content-area');
     if (area) area.innerHTML = '<p style="text-align:center;color:#aaa;margin-top:40px;">Loading library...</p>';
-    try {
-        const snapshot = await db.collection('songs').orderBy('createdAt', 'desc').get();
-        allTracks = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        speedDialPicks = computeSpeedDialPicks();
-        if (!liquidNavReady) { initLiquidNav(); liquidNavReady = true; }
-        renderCurrentView();
-    } catch (err) {
-        console.error('fetchAllTracks error:', err);
-        if (area) area.innerHTML = '<p style="color:#ff4d4d;text-align:center;">Error loading tracks. Please refresh.</p>';
-    }
+    if (_unsubTracks) { _unsubTracks(); _unsubTracks = null; }
+    _unsubTracks = db.collection('songs').orderBy('createdAt', 'desc').onSnapshot(
+        snapshot => {
+            allTracks = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            speedDialPicks = computeSpeedDialPicks();
+            if (!liquidNavReady) { initLiquidNav(); liquidNavReady = true; restorePlaybackSession(); handleDeepLink(); }
+            renderCurrentView();
+        },
+        err => {
+            console.error('fetchAllTracks error:', err);
+            const liveArea = document.getElementById('content-area');
+            if (liveArea) liveArea.innerHTML = '<p style="color:#ff4d4d;text-align:center;">Error loading tracks. Please refresh.</p>';
+        }
+    );
+    // Return a promise-like so existing Promise.all call still works
+    return Promise.resolve();
 }
 
 // search handled by overlay
@@ -919,7 +915,7 @@ function getLikedTracks() {
 // ==========================================
 // 6. RENDER
 // ==========================================
-function renderCurrentView() {
+async function renderCurrentView() {
     const area = document.getElementById('content-area');
     if (!area) return;
     area.innerHTML = '';
@@ -927,11 +923,11 @@ function renderCurrentView() {
     if (currentTab === 'all') {
         renderAllView(area);
     } else if (currentTab === 'categories') {
-        renderPlaylistView(area);   // language sections
+        renderPlaylistView(area);
     } else if (currentTab === 'liked') {
         renderLikedView(area);
     } else if (currentTab === 'library') {
-        renderLibraryView(area);    // downloads + playlists
+        await renderLibraryView(area);  // async — awaited so playlists render
     }
 }
 
@@ -1199,7 +1195,11 @@ function renderPlaylistView(area) {
     });
 
     if (!hasAnything) {
-        area.innerHTML = '<p style="text-align:center;color:#aaa;margin-top:40px;">No tracks found.</p>';
+        area.innerHTML = `<div class="dl-empty">
+            <i class="fa-solid fa-layer-group dl-empty-icon"></i>
+            <p>No tracks in the library yet.</p>
+            <p style="font-size:.8rem;color:#555;">Songs uploaded by the admin will appear here.</p>
+        </div>`;
     }
 }
 
@@ -1242,7 +1242,7 @@ function renderTrackItems(trackArray, container, fullQueue) {
         // Language badge (shown in 'all' view and 'playlist' view)
         const catKey  = getCategory(track);
         const catMeta = CATEGORIES.find(c => c.key === catKey);
-        const badge   = (currentTab === 'all' || currentTab === 'playlist') && catMeta
+        const badge   = (currentTab === 'all' || currentTab === 'categories') && catMeta
             ? `<span class="lang-badge lang-badge-${catKey}">${catMeta.label.substring(0,3).toUpperCase()}</span>`
             : '';
 
@@ -1288,17 +1288,31 @@ function escHtml(str) {
 // ==========================================
 // 7. LIKES
 // ==========================================
-async function toggleLike(trackId) {
+function toggleLike(trackId) {
     if (!auth.currentUser) return;
+    // Optimistic UI — update in-memory set and buttons immediately
+    const wasLiked = likedSongIds.has(trackId);
+    if (wasLiked) likedSongIds.delete(trackId);
+    else           likedSongIds.add(trackId);
+    updateGlobalLikeButtons();
+    // Update all list-item heart buttons for this track
+    document.querySelectorAll(`.list-like-btn[data-id="${trackId}"]`).forEach(btn => {
+        btn.classList.toggle('liked', !wasLiked);
+        btn.querySelector('i').className = wasLiked ? 'fa-regular fa-heart' : 'fa-solid fa-heart liked';
+    });
+
+    // Persist to Firestore in background
     const uid     = auth.currentUser.uid;
     const likeRef = db.collection('users').doc(uid).collection('likes').doc(trackId);
     const songRef = db.collection('songs').doc(trackId);
-    if (likedSongIds.has(trackId)) {
-        await likeRef.delete();
-        await songRef.update({ likeCount: firebase.firestore.FieldValue.increment(-1) });
+    if (wasLiked) {
+        likeRef.delete().catch(() => { likedSongIds.add(trackId); updateGlobalLikeButtons(); });
+        songRef.update({ likeCount: firebase.firestore.FieldValue.increment(-1) }).catch(() => {});
     } else {
-        await likeRef.set({ addedAt: firebase.firestore.FieldValue.serverTimestamp() });
-        await songRef.update({ likeCount: firebase.firestore.FieldValue.increment(1) });
+        likeRef.set({ addedAt: firebase.firestore.FieldValue.serverTimestamp() }).catch(() => {
+            likedSongIds.delete(trackId); updateGlobalLikeButtons();
+        });
+        songRef.update({ likeCount: firebase.firestore.FieldValue.increment(1) }).catch(() => {});
     }
 }
 
@@ -1345,6 +1359,55 @@ window.updateAndroidMedia = function() {
 audio.addEventListener('loadedmetadata', window.updateAndroidMedia);
 audio.addEventListener('seeked',         window.updateAndroidMedia);
 
+function savePlaybackSession() {
+    if (!currentQueue.length || currentTrackIndex < 0) return;
+    const track = currentQueue[currentTrackIndex];
+    try {
+        sessionStorage.setItem('ht_session', JSON.stringify({
+            trackId:  track.id,
+            position: audio.currentTime || 0,
+            queue:    currentQueue.map(t => t.id),
+            qIdx:     currentTrackIndex,
+            shuffle:  isShuffle,
+            repeat:   isRepeat
+        }));
+    } catch {}
+}
+
+function restorePlaybackSession() {
+    try {
+        const raw = sessionStorage.getItem('ht_session');
+        if (!raw || !allTracks.length) return;
+        const s = JSON.parse(raw);
+        const queue = s.queue.map(id => allTracks.find(t => t.id === id)).filter(Boolean);
+        if (!queue.length) return;
+        currentQueue      = queue;
+        currentTrackIndex = Math.min(s.qIdx, queue.length - 1);
+        isShuffle = s.shuffle || false;
+        isRepeat  = s.repeat  || false;
+        document.getElementById('fs-shuffle-btn')?.classList.toggle('active', isShuffle);
+        document.getElementById('fs-repeat-btn')?.classList.toggle('active', isRepeat);
+        const track = currentQueue[currentTrackIndex];
+        if (!track) return;
+        // Update mini-player display without auto-playing
+        document.getElementById('player-title').innerText  = track.title;
+        document.getElementById('player-artist').innerText = track.artist;
+        document.getElementById('fs-player-title').innerText  = track.title;
+        document.getElementById('fs-player-artist').innerText = track.artist;
+        document.getElementById('player-art').innerHTML =
+            track.coverArt ? `<img src="${track.coverArt}">` : `<i class="fa-solid fa-music"></i>`;
+        audio.src = track.url;
+        audio.currentTime = s.position || 0;
+        setPlayState(false);
+        syncCardHighlights(track.id);
+        document.getElementById('mini-player').style.display = 'flex';
+        showDlToast('▶ Tap to resume: ' + track.title);
+    } catch {}
+}
+
+// Save session every 5 seconds during playback
+setInterval(() => { if (!audio.paused) savePlaybackSession(); }, 5000);
+
 function playTrack() {
     if (!currentQueue.length || currentTrackIndex < 0) return;
     const track = currentQueue[currentTrackIndex];
@@ -1367,7 +1430,7 @@ function playTrack() {
 
     updateGlobalLikeButtons();
     audio.src = track.url;
-    audio.play();
+    audio.play().catch(() => setPlayState(false));
     setPlayState(true);
     // Sync card highlights across ALL card sections (recents + speed-dial)
     syncCardHighlights(track.id);
@@ -1380,18 +1443,25 @@ function playTrack() {
             title: track.title, artist: track.artist, album: 'HalalTune',
             artwork: [{ src: track.coverArt || 'icon.png', sizes: '512x512', type: 'image/png' }]
         });
-        navigator.mediaSession.setActionHandler('play',         () => { audio.play();  setPlayState(true);  });
+        navigator.mediaSession.setActionHandler('play',         () => { audio.play().catch(() => {}); setPlayState(true); });
         navigator.mediaSession.setActionHandler('pause',        () => { audio.pause(); setPlayState(false); });
         navigator.mediaSession.setActionHandler('previoustrack', () => playPrev());
         navigator.mediaSession.setActionHandler('nexttrack',    () => playNext());
         navigator.mediaSession.setActionHandler('seekto',       d  => { audio.currentTime = d.seekTime; });
     }
 
-    const activeUid = auth.currentUser ? auth.currentUser.uid : localUserId;
-    db.collection('songs').doc(track.id).update({
-        streamCount: firebase.firestore.FieldValue.increment(1),
-        listeners:   firebase.firestore.FieldValue.arrayUnion(activeUid)
-    }).catch(() => {});
+    // Only count a stream after 10 seconds of continuous playback
+    const activeUid   = auth.currentUser ? auth.currentUser.uid : localUserId;
+    const streamTrackId = track.id;
+    clearTimeout(playTrack._streamTimer);
+    playTrack._streamTimer = setTimeout(() => {
+        // Guard: make sure the user is still on the same track
+        if (currentQueue[currentTrackIndex]?.id !== streamTrackId) return;
+        db.collection('songs').doc(streamTrackId).update({
+            streamCount: firebase.firestore.FieldValue.increment(1),
+            listeners:   firebase.firestore.FieldValue.arrayUnion(activeUid)
+        }).catch(() => {});
+    }, 10000);
 }
 
 function playNext() {
@@ -1429,8 +1499,10 @@ function setPlayState(isPlaying) {
     playBtns.forEach(btn => {
         const icon = btn.querySelector('i');
         if (icon) {
-            if (isPlaying)  { icon.classList.remove('fa-play');  icon.classList.add('fa-pause'); }
-            else            { icon.classList.remove('fa-pause'); icon.classList.add('fa-play');  }
+            // Reset completely — removes spinner, play, pause, all variants
+            icon.className = isPlaying
+                ? 'fa-solid fa-pause'
+                : 'fa-solid fa-play';
         }
     });
     window.updateAndroidMedia();
@@ -1439,7 +1511,7 @@ function setPlayState(isPlaying) {
 playBtns.forEach(btn => btn.addEventListener('click', e => {
     e.stopPropagation();
     if (!audio.src) return;
-    if (audio.paused) { audio.play(); setPlayState(true); } else { audio.pause(); setPlayState(false); }
+    if (audio.paused) { audio.play().catch(() => setPlayState(false)); setPlayState(true); } else { audio.pause(); setPlayState(false); }
 }));
 
 // ==========================================
@@ -1476,7 +1548,27 @@ miniBar.addEventListener('input', handleSeek);
 fsBar.addEventListener('input', handleSeek);
 
 audio.addEventListener('ended', () => {
-    if (isRepeat) { audio.currentTime = 0; audio.play(); } else playNext();
+    if (isRepeat) { audio.currentTime = 0; audio.play().catch(() => {}); } else playNext();
+});
+
+// Audio error — reset play state and toast user
+audio.addEventListener('error', () => {
+    setPlayState(false);  // full reset via new setPlayState
+    showDlToast('Failed to load track. Check your connection.');
+});
+
+// Buffering — show spinner on play button
+audio.addEventListener('waiting', () => {
+    playBtns.forEach(btn => {
+        const i = btn.querySelector('i');
+        if (i) i.className = 'fa-solid fa-spinner fa-spin';
+    });
+});
+audio.addEventListener('playing', () => {
+    setPlayState(true); // restores correct icon after buffering
+});
+audio.addEventListener('canplay', () => {
+    setPlayState(!audio.paused);
 });
 
 // ==========================================
@@ -1654,9 +1746,7 @@ function renderRelated(currentTrack) {
 // ==========================================
 // 11. OPTIONS MODAL
 // ==========================================
-document.getElementById('fs-menu-btn').addEventListener('click', () => {
-    if (currentQueue[currentTrackIndex]) document.getElementById('options-modal').style.display = 'flex';
-});
+// options-modal open handled by single capture listener below
 document.getElementById('opt-close-btn').addEventListener('click', () => {
     document.getElementById('options-modal').style.display = 'none';
 });
@@ -1677,6 +1767,12 @@ function saveDownloadsMeta(list) {
 }
 function isDownloaded(trackId) {
     return getDownloadsMeta().some(d => d.id === trackId);
+}
+function isDownloadStale(trackId) {
+    const meta  = getDownloadsMeta().find(d => d.id === trackId);
+    const live  = allTracks.find(t => t.id === trackId);
+    if (!meta || !live) return false;
+    return live.url && meta.url && live.url !== meta.url;
 }
 
 async function downloadTrack(track) {
@@ -1732,8 +1828,15 @@ async function downloadTrack(track) {
     } catch (err) {
         showDlToast('Download failed — check your connection');
         console.error('Download error:', err);
+    } finally {
+        // Always re-enable button and reset label regardless of outcome
+        if (btn) btn.disabled = false;
+        if (labelEl) {
+        if (isDownloadStale(track.id)) labelEl.textContent = '⚠ Re-download (updated)';
+        else if (isDownloaded(track.id)) labelEl.textContent = 'Remove download';
+        else labelEl.textContent = 'Download for offline';
     }
-    if (btn) btn.disabled = false;
+    }
 }
 
 function showDlToast(msg) {
@@ -1749,14 +1852,18 @@ function showDlToast(msg) {
     }, 3000);
 }
 
-// Update download button label when options modal opens
+// Single options-modal opener — sets download label then shows modal
 document.getElementById('fs-menu-btn').addEventListener('click', () => {
-    if (!currentQueue[currentTrackIndex]) return;
-    const track   = currentQueue[currentTrackIndex];
+    const track = currentQueue[currentTrackIndex];
+    if (!track) return;
     const labelEl = document.getElementById('opt-download-label');
-    if (labelEl) labelEl.textContent = isDownloaded(track.id) ? 'Remove download' : 'Download for offline';
+    if (labelEl) {
+        if (isDownloadStale(track.id))      labelEl.textContent = '⚠ Re-download (updated)';
+        else if (isDownloaded(track.id))    labelEl.textContent = 'Remove download';
+        else                                labelEl.textContent = 'Download for offline';
+    }
     document.getElementById('options-modal').style.display = 'flex';
-}, true);   // capture so it runs before the existing listener
+});
 
 document.getElementById('opt-download-btn').addEventListener('click', () => {
     const track = currentQueue[currentTrackIndex];
@@ -1766,61 +1873,88 @@ document.getElementById('opt-download-btn').addEventListener('click', () => {
 
 // ── DOWNLOADS VIEW ────────────────────────────────────────────────────────────
 // ── LIBRARY VIEW (Downloads + Playlists) ─────────────────────────────────────
-let librarySubTab = 'downloads'; // 'downloads' | 'playlists'
+let librarySubTab = 'downloads'; // 'downloads' | 'playlists' | 'liked'
 
-function renderLibraryView(area) {
-    // Liquid glass bubble sub-nav
+async function renderLibraryView(area) {
+    // ── Build the persistent nav bar ──────────────────────────────────────────
     const subBar = document.createElement('div');
     subBar.className = 'lib-liquid-nav-wrap';
+    subBar.id = 'lib-nav-wrap';
     subBar.innerHTML = `
         <div class="lib-liquid-nav" id="lib-liquid-nav">
             <div class="lib-liquid-bubble" id="lib-liquid-bubble"></div>
-            <button class="lib-liquid-btn ${librarySubTab==='downloads'?'active':''}" data-sub="downloads">
-                Downloads
-            </button>
-            <button class="lib-liquid-btn ${librarySubTab==='playlists'?'active':''}" data-sub="playlists">
-                Playlists
-            </button>
+            <button class="lib-liquid-btn ${librarySubTab==='downloads'?'active':''}" data-sub="downloads">Downloads</button>
+            <button class="lib-liquid-btn ${librarySubTab==='playlists'?'active':''}" data-sub="playlists">Playlists</button>
+            <button class="lib-liquid-btn ${librarySubTab==='liked'?'active':''}" data-sub="liked">Liked</button>
         </div>`;
     area.appendChild(subBar);
 
-    // Position bubble immediately after insert
+    // ── Content container — only THIS gets swapped on sub-tab change ──────────
+    const contentWrap = document.createElement('div');
+    contentWrap.id = 'lib-content-wrap';
+    area.appendChild(contentWrap);
+
+    // ── Position bubble using offsetLeft (scroll-safe, always correct) ────────
+    function positionBubble(targetBtn, animate) {
+        const nav    = document.getElementById('lib-liquid-nav');
+        const bubble = document.getElementById('lib-liquid-bubble');
+        if (!nav || !bubble || !targetBtn) return;
+        if (animate) bubble.classList.add('animated');
+        bubble.style.width     = targetBtn.offsetWidth  + 'px';
+        bubble.style.height    = targetBtn.offsetHeight + 'px';
+        // offsetLeft on the button is relative to its offsetParent (the nav)
+        bubble.style.transform = 'translateX(' + targetBtn.offsetLeft + 'px)';
+    }
+
+    // Initial position — after one rAF so the browser has measured the buttons
     requestAnimationFrame(() => {
-        const nav    = subBar.querySelector('#lib-liquid-nav');
-        const bubble = subBar.querySelector('#lib-liquid-bubble');
         const active = subBar.querySelector('.lib-liquid-btn.active');
-        if (nav && bubble && active) {
-            const navRect = nav.getBoundingClientRect();
-            const btnRect = active.getBoundingClientRect();
-            bubble.style.width  = btnRect.width  + 'px';
-            bubble.style.height = btnRect.height + 'px';
-            bubble.style.transform = 'translateX(' + (btnRect.left - navRect.left - 5) + 'px)';
-        }
+        positionBubble(active, false); // no animation on first render
     });
 
+    // ── Wire tab buttons ──────────────────────────────────────────────────────
     subBar.querySelectorAll('.lib-liquid-btn').forEach(btn => {
         btn.addEventListener('click', () => {
-            // Animate bubble before re-render
-            const nav    = subBar.closest('.lib-liquid-nav-wrap')?.querySelector('#lib-liquid-nav')
-                          || document.getElementById('lib-liquid-nav');
-            const bubble = document.getElementById('lib-liquid-bubble');
-            const navRect = nav?.getBoundingClientRect();
-            const btnRect = btn.getBoundingClientRect();
-            if (bubble && navRect) {
-                bubble.style.width  = btnRect.width  + 'px';
-                bubble.style.height = btnRect.height + 'px';
-                bubble.style.transform = 'translateX(' + (btnRect.left - navRect.left - 5) + 'px)';
-            }
+            if (btn.getAttribute('data-sub') === librarySubTab) return; // same tab — no-op
+
+            // Flip active class and animate bubble in-place (no re-render of nav)
+            subBar.querySelectorAll('.lib-liquid-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            positionBubble(btn, true); // animated slide
+
+            // Swap only the content below the nav
             librarySubTab = btn.getAttribute('data-sub');
-            setTimeout(() => renderCurrentView(), 200);
+            renderLibraryContent(contentWrap);
         });
     });
 
+    // ── Render initial content ────────────────────────────────────────────────
+    await renderLibraryContent(contentWrap);
+}
+
+async function renderLibraryContent(wrap) {
+    wrap.innerHTML = '';
     if (librarySubTab === 'downloads') {
-        renderDownloadsSection(area);
+        renderDownloadsSection(wrap);
+    } else if (librarySubTab === 'liked') {
+        renderLikedSection(wrap);
     } else {
-        renderPlaylistsSection(area);
+        await renderPlaylistsSection(wrap);
     }
+}
+
+function renderLikedSection(wrap) {
+    const tracks = getLikedTracks();
+    if (!tracks.length) {
+        wrap.innerHTML = '<div class="dl-empty"><i class="fa-solid fa-heart dl-empty-icon" style="color:#ef4444;"></i>' +
+            '<p>No liked songs yet.</p>' +
+            '<p style="font-size:.8rem;color:#555;">Tap the heart on any song to save it here.</p></div>';
+        return;
+    }
+    const listEl = document.createElement('div');
+    listEl.className = 'yt-track-list';
+    renderTrackItems(tracks, listEl, tracks);
+    wrap.appendChild(listEl);
 }
 
 function renderDownloadsSection(area) {
@@ -1972,7 +2106,13 @@ document.getElementById('cpl-save-btn')?.addEventListener('click', async () => {
         document.getElementById('create-playlist-modal').style.display = 'none';
         librarySubTab = 'playlists';
         setActiveTab('library');
-    } catch (err) { errEl.textContent = 'Failed to create. Try again.'; errEl.style.display = 'block'; }
+    } catch (err) {
+        console.error('Create playlist error:', err);
+        const msg = err.code === 'permission-denied'
+            ? 'Permission denied. Add Firestore rules for the playlists collection (see console).'
+            : 'Failed to create: ' + (err.message || 'Unknown error');
+        errEl.textContent = msg; errEl.style.display = 'block';
+    }
     btn.disabled = false; btn.textContent = 'Create Playlist';
 });
 
@@ -2043,7 +2183,7 @@ async function openPlaylistView(pl) {
             ${pl.description ? '<p>' + escHtml(pl.description) + '</p>' : ''}
         </div>`;
 
-    // Load track objects
+    // Load track objects in playlist order (not allTracks order)
     const trackIds = pl.tracks || [];
     const trackObjs = trackIds.map(id => allTracks.find(t => t.id === id)).filter(Boolean);
     const listEl = document.getElementById('plv-track-list');
@@ -2071,21 +2211,44 @@ async function openPlaylistView(pl) {
 
     page.style.display = 'flex';
     requestAnimationFrame(() => page.classList.add('legal-open'));
-    pushBackStack('playlist-view', closePlaylistView);
+    if (!PAGE_STACK.some(e => e.name === 'playlist-view'))
+        pushBackStack('playlist-view', closePlaylistView);
 }
 
 function closePlaylistView() {
     const page = document.getElementById('playlist-view-page');
+    if (!page) return;
     page.classList.remove('legal-open');
     setTimeout(() => { page.style.display = 'none'; }, 300);
-    PAGE_STACK.filter((_, i, arr) => arr.length - 1 === i && arr[i].name === 'playlist-view')
-              .forEach(() => PAGE_STACK.pop());
+    const idx = PAGE_STACK.findIndex(e => e.name === 'playlist-view');
+    if (idx !== -1) PAGE_STACK.splice(idx, 1);
 }
 document.getElementById('plv-back-btn')?.addEventListener('click', closePlaylistView);
 document.getElementById('opt-share-btn').addEventListener('click', () => {
     const track = currentQueue[currentTrackIndex];
     if (!track) return;
-    if (navigator.share) navigator.share({ title: `Listen to ${track.title} by ${track.artist}`, url: location.href }).catch(() => {});
-    else alert('Link copied to clipboard!');
+    // Deep link includes track ID so recipients land directly on the song
+    const shareUrl = location.origin + location.pathname + '#song/' + track.id;
+    if (navigator.share) {
+        navigator.share({ title: track.title + ' — HalalTune', text: 'Listen to ' + track.title + ' by ' + track.artist, url: shareUrl }).catch(() => {});
+    } else {
+        navigator.clipboard?.writeText(shareUrl).then(() => showDlToast('Link copied!')).catch(() => showDlToast('Share: ' + shareUrl));
+    }
     document.getElementById('options-modal').style.display = 'none';
 });
+
+// Handle deep-link on page load — play shared track when allTracks is ready
+function handleDeepLink() {
+    const hash = location.hash;
+    if (!hash.startsWith('#song/')) return;
+    const trackId = hash.slice(6);
+    const track   = allTracks.find(t => t.id === trackId);
+    if (!track) return;
+    currentQueue      = [...allTracks];
+    currentTrackIndex = allTracks.indexOf(track);
+    playTrack();
+    // Open fullscreen player automatically
+    setTimeout(() => { document.getElementById('full-screen-player')?.classList.add('active'); }, 400);
+    // Clear hash so refresh doesn't auto-play again
+    history.replaceState(null, '', location.pathname);
+}
