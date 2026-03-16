@@ -48,7 +48,7 @@ let currentTrackIndex = -1;
 let isShuffle        = false;
 let isRepeat         = false;
 let likedSongIds     = new Set();
-let currentTab       = 'all';   // 'all' | 'playlist' | 'liked'
+let currentTab       = 'all';   // 'all' | 'categories' | 'library' | 'liked'
 
 // Per-section "see all" state
 const seeAllState = { arabic: false, malayalam: false, english: false, urdu: false, others: false };
@@ -547,18 +547,18 @@ function closeProfileModal() {
 
 // Populate avatar + user info from Firebase user object
 function populateProfileUI(user) {
-    // Topbar avatar
-    const topbarAvatar = document.getElementById('topbar-avatar');
-    // Large avatar in modal
+    const imgHtml = user.photoURL
+        ? `<img src="${user.photoURL}" alt="Profile" onerror="this.parentElement.innerHTML='<i class=\'fa-solid fa-user\'></i>'">`
+        : '<i class="fa-solid fa-user"></i>';
+
+    // Bottom nav avatar
+    const bnAvatar = document.getElementById('bn-avatar');
+    if (bnAvatar) bnAvatar.innerHTML = imgHtml;
+
+    // Modal large avatar
     const pmAvatarLg = document.getElementById('pm-avatar-lg');
-    if (user.photoURL) {
-        const imgHtml = `<img src="${user.photoURL}" alt="Profile" onerror="this.parentElement.innerHTML='<i class=\'fa-solid fa-user\'></i>'">`;
-        if (topbarAvatar) topbarAvatar.innerHTML = imgHtml;
-        if (pmAvatarLg)   pmAvatarLg.innerHTML   = imgHtml;
-    } else {
-        if (topbarAvatar) topbarAvatar.innerHTML = '<i class="fa-solid fa-user"></i>';
-        if (pmAvatarLg)   pmAvatarLg.innerHTML   = '<i class="fa-solid fa-user"></i>';
-    }
+    if (pmAvatarLg) pmAvatarLg.innerHTML = imgHtml;
+
     const nameEl  = document.getElementById('pm-display-name');
     const emailEl = document.getElementById('pm-email');
     if (nameEl)  nameEl.innerText  = user.displayName || 'HalalTune User';
@@ -566,6 +566,17 @@ function populateProfileUI(user) {
 }
 
 document.getElementById('profile-btn')?.addEventListener('click', openProfileModal);
+
+// Bottom nav account button opens profile modal
+document.getElementById('bn-account')?.addEventListener('click', openProfileModal);
+
+// Bottom nav tab buttons
+document.querySelectorAll('.bn-btn[data-tab]').forEach(btn => {
+    btn.addEventListener('click', () => {
+        const tab = btn.getAttribute('data-tab');
+        setActiveTab(tab);
+    });
+});
 document.getElementById('pm-close-btn')?.addEventListener('click', closeProfileModal);
 document.getElementById('profile-modal')?.addEventListener('click', e => {
     if (e.target === document.getElementById('profile-modal')) closeProfileModal();
@@ -813,18 +824,29 @@ function updateLiquidBubble(activeBtn) {
     bubble.style.transform = `translateX(${btnRect.left - navRect.left - 5}px)`;
 }
 
+function updateBnBubble(activeBtn) {
+    const bubble = document.getElementById('bn-bubble');
+    const nav    = document.getElementById('bottom-nav');
+    if (!bubble || !activeBtn || !nav) return;
+    const navRect = nav.getBoundingClientRect();
+    const btnRect = activeBtn.getBoundingClientRect();
+    bubble.style.width  = btnRect.width  + 'px';
+    bubble.style.height = (btnRect.height - 8) + 'px';
+    bubble.style.left   = (btnRect.left - navRect.left) + 'px';
+    bubble.style.top    = '4px';
+}
+
 function setActiveTab(tabName) {
     currentTab = tabName;
-    // Reset all see-all states when switching tabs
     Object.keys(seeAllState).forEach(k => seeAllState[k] = false);
 
-    // Sync liquid nav bubble
-    document.querySelectorAll('.liquid-nav-btn').forEach(b => {
-        const match = b.getAttribute('data-tab') === tabName;
-        b.classList.toggle('active', match);
-        if (match) updateLiquidBubble(b);
+    // Sync bottom nav + animate bubble
+    document.querySelectorAll('.bn-btn[data-tab]').forEach(b => {
+        const isActive = b.getAttribute('data-tab') === tabName;
+        b.classList.toggle('active', isActive);
+        if (isActive) updateBnBubble(b);
     });
-    // Sync sidebar
+    // Sync sidebar (desktop)
     document.querySelectorAll('.yt-nav-btn').forEach(b => {
         if (b.id && b.id.includes('logout')) return;
         b.classList.toggle('active', b.getAttribute('data-tab') === tabName);
@@ -842,11 +864,11 @@ function initLiquidNav() {
         if (btn.id && btn.id.includes('logout')) return;
         btn.addEventListener('click', () => setActiveTab(btn.getAttribute('data-tab')));
     });
-    // Position bubble on initial active button after layout settles
+    // Position bottom nav bubble on load
     setTimeout(() => {
-        const active = document.querySelector('.liquid-nav-btn.active');
-        if (active) updateLiquidBubble(active);
-    }, 120);
+        const activebn = document.querySelector('.bn-btn.active');
+        if (activebn) updateBnBubble(activebn);
+    }, 150);
 }
 
 // ==========================================
@@ -904,10 +926,12 @@ function renderCurrentView() {
 
     if (currentTab === 'all') {
         renderAllView(area);
-    } else if (currentTab === 'playlist') {
-        renderPlaylistView(area);
+    } else if (currentTab === 'categories') {
+        renderPlaylistView(area);   // language sections
     } else if (currentTab === 'liked') {
         renderLikedView(area);
+    } else if (currentTab === 'library') {
+        renderLibraryView(area);    // downloads + playlists
     }
 }
 
@@ -1640,13 +1664,424 @@ document.getElementById('options-modal').addEventListener('click', e => {
     if (e.target === document.getElementById('options-modal'))
         document.getElementById('options-modal').style.display = 'none';
 });
+// ── IN-APP DOWNLOADS (Cache API) ──────────────────────────────────────────────
+const DL_CACHE   = 'halaltune-downloads-v1';
+const DL_STORE   = 'ht_downloads';   // localStorage key for metadata list
+
+function getDownloadsMeta() {
+    try { return JSON.parse(localStorage.getItem(DL_STORE) || '[]'); }
+    catch { return []; }
+}
+function saveDownloadsMeta(list) {
+    localStorage.setItem(DL_STORE, JSON.stringify(list));
+}
+function isDownloaded(trackId) {
+    return getDownloadsMeta().some(d => d.id === trackId);
+}
+
+async function downloadTrack(track) {
+    const btn      = document.getElementById('opt-download-btn');
+    const labelEl  = document.getElementById('opt-download-label');
+    if (!track) return;
+
+    if (isDownloaded(track.id)) {
+        // Already downloaded — ask to remove
+        if (confirm('Remove "' + track.title + '" from downloads?')) {
+            const cache = await caches.open(DL_CACHE);
+            await cache.delete(track.url);
+            const list = getDownloadsMeta().filter(d => d.id !== track.id);
+            saveDownloadsMeta(list);
+            showDlToast('Removed from downloads');
+            labelEl.textContent = 'Download for offline';
+        }
+        document.getElementById('options-modal').style.display = 'none';
+        return;
+    }
+
+    // Start download
+    labelEl.textContent = 'Downloading...';
+    if (btn) btn.disabled = true;
+    document.getElementById('options-modal').style.display = 'none';
+    showDlToast('Downloading "' + track.title + '"…');
+
+    try {
+        const cache    = await caches.open(DL_CACHE);
+        const response = await fetch(track.url);
+        if (!response.ok) throw new Error('Network error');
+        await cache.put(track.url, response);
+
+        // Save metadata
+        const list = getDownloadsMeta().filter(d => d.id !== track.id);
+        list.unshift({
+            id:        track.id,
+            title:     track.title,
+            artist:    track.artist,
+            coverArt:  track.coverArt || '',
+            url:       track.url,
+            language:  track.language || '',
+            savedAt:   Date.now()
+        });
+        saveDownloadsMeta(list);
+
+        // Update Firestore download count (fire-and-forget)
+        db.collection('songs').doc(track.id)
+          .update({ downloadCount: firebase.firestore.FieldValue.increment(1) })
+          .catch(() => {});
+
+        showDlToast('✓ "' + track.title + '" saved for offline');
+    } catch (err) {
+        showDlToast('Download failed — check your connection');
+        console.error('Download error:', err);
+    }
+    if (btn) btn.disabled = false;
+}
+
+function showDlToast(msg) {
+    const toast = document.getElementById('dl-toast');
+    if (!toast) return;
+    toast.textContent = msg;
+    toast.style.display = 'flex';
+    toast.classList.add('dl-toast-show');
+    clearTimeout(toast._timer);
+    toast._timer = setTimeout(() => {
+        toast.classList.remove('dl-toast-show');
+        setTimeout(() => { toast.style.display = 'none'; }, 300);
+    }, 3000);
+}
+
+// Update download button label when options modal opens
+document.getElementById('fs-menu-btn').addEventListener('click', () => {
+    if (!currentQueue[currentTrackIndex]) return;
+    const track   = currentQueue[currentTrackIndex];
+    const labelEl = document.getElementById('opt-download-label');
+    if (labelEl) labelEl.textContent = isDownloaded(track.id) ? 'Remove download' : 'Download for offline';
+    document.getElementById('options-modal').style.display = 'flex';
+}, true);   // capture so it runs before the existing listener
+
 document.getElementById('opt-download-btn').addEventListener('click', () => {
     const track = currentQueue[currentTrackIndex];
     if (!track) return;
-    db.collection('songs').doc(track.id).update({ downloadCount: firebase.firestore.FieldValue.increment(1) });
-    window.open(track.url, '_blank');
-    document.getElementById('options-modal').style.display = 'none';
+    downloadTrack(track);
 });
+
+// ── DOWNLOADS VIEW ────────────────────────────────────────────────────────────
+// ── LIBRARY VIEW (Downloads + Playlists) ─────────────────────────────────────
+let librarySubTab = 'downloads'; // 'downloads' | 'playlists'
+
+function renderLibraryView(area) {
+    // Liquid glass bubble sub-nav
+    const subBar = document.createElement('div');
+    subBar.className = 'lib-liquid-nav-wrap';
+    subBar.innerHTML = `
+        <div class="lib-liquid-nav" id="lib-liquid-nav">
+            <div class="lib-liquid-bubble" id="lib-liquid-bubble"></div>
+            <button class="lib-liquid-btn ${librarySubTab==='downloads'?'active':''}" data-sub="downloads">
+                Downloads
+            </button>
+            <button class="lib-liquid-btn ${librarySubTab==='playlists'?'active':''}" data-sub="playlists">
+                Playlists
+            </button>
+        </div>`;
+    area.appendChild(subBar);
+
+    // Position bubble immediately after insert
+    requestAnimationFrame(() => {
+        const nav    = subBar.querySelector('#lib-liquid-nav');
+        const bubble = subBar.querySelector('#lib-liquid-bubble');
+        const active = subBar.querySelector('.lib-liquid-btn.active');
+        if (nav && bubble && active) {
+            const navRect = nav.getBoundingClientRect();
+            const btnRect = active.getBoundingClientRect();
+            bubble.style.width  = btnRect.width  + 'px';
+            bubble.style.height = btnRect.height + 'px';
+            bubble.style.transform = 'translateX(' + (btnRect.left - navRect.left - 5) + 'px)';
+        }
+    });
+
+    subBar.querySelectorAll('.lib-liquid-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            // Animate bubble before re-render
+            const nav    = subBar.closest('.lib-liquid-nav-wrap')?.querySelector('#lib-liquid-nav')
+                          || document.getElementById('lib-liquid-nav');
+            const bubble = document.getElementById('lib-liquid-bubble');
+            const navRect = nav?.getBoundingClientRect();
+            const btnRect = btn.getBoundingClientRect();
+            if (bubble && navRect) {
+                bubble.style.width  = btnRect.width  + 'px';
+                bubble.style.height = btnRect.height + 'px';
+                bubble.style.transform = 'translateX(' + (btnRect.left - navRect.left - 5) + 'px)';
+            }
+            librarySubTab = btn.getAttribute('data-sub');
+            setTimeout(() => renderCurrentView(), 200);
+        });
+    });
+
+    if (librarySubTab === 'downloads') {
+        renderDownloadsSection(area);
+    } else {
+        renderPlaylistsSection(area);
+    }
+}
+
+function renderDownloadsSection(area) {
+    const list = getDownloadsMeta();
+    if (!list.length) {
+        area.innerHTML += '<div class="dl-empty"><i class="fa-solid fa-arrow-down-to-line dl-empty-icon"></i>' +
+            '<p>No downloaded songs yet.</p>' +
+            '<p style="font-size:.8rem;color:#555;">Tap ⋮ on any song to save it for offline.</p></div>';
+        return;
+    }
+    const tracks = list.map(d => ({ id:d.id, title:d.title, artist:d.artist, coverArt:d.coverArt, url:d.url, language:d.language }));
+    const listEl = document.createElement('div');
+    listEl.className = 'yt-track-list';
+    renderTrackItems(tracks, listEl, tracks);
+    area.appendChild(listEl);
+}
+
+// ── PLAYLISTS ────────────────────────────────────────────────────────────────
+let currentPlaylists = [];
+
+async function loadUserPlaylists() {
+    if (!auth.currentUser) return [];
+    try {
+        const snap = await db.collection('playlists')
+            .where('ownerId', '==', auth.currentUser.uid)
+            .orderBy('createdAt', 'desc')
+            .get();
+        currentPlaylists = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        return currentPlaylists;
+    } catch { return []; }
+}
+
+async function loadPublicPlaylists() {
+    try {
+        const snap = await db.collection('playlists')
+            .where('visibility', '==', 'public')
+            .orderBy('createdAt', 'desc')
+            .limit(20)
+            .get();
+        return snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(p => !auth.currentUser || p.ownerId !== auth.currentUser.uid);
+    } catch { return []; }
+}
+
+async function renderPlaylistsSection(area) {
+    area.innerHTML += '<div class="pl-loading"><i class="fa-solid fa-spinner fa-spin"></i></div>';
+    const [mine, pub] = await Promise.all([loadUserPlaylists(), loadPublicPlaylists()]);
+    // Remove loading
+    const loading = area.querySelector('.pl-loading');
+    if (loading) loading.remove();
+
+    // Create button
+    const createRow = document.createElement('div');
+    createRow.className = 'pl-create-row';
+    createRow.innerHTML = '<button class="pl-create-btn" id="pl-create-btn"><i class="fa-solid fa-plus"></i> Create Playlist</button>';
+    createRow.querySelector('#pl-create-btn').addEventListener('click', openCreatePlaylistModal);
+    area.appendChild(createRow);
+
+    // My playlists
+    if (mine.length) {
+        const myHeader = document.createElement('div');
+        myHeader.className = 'section-title-row';
+        myHeader.innerHTML = '<h2 class="section-heading"><span class="section-dot"></span>My Playlists</h2>';
+        area.appendChild(myHeader);
+        renderPlaylistGrid(mine, area);
+    }
+
+    // Public playlists
+    if (pub.length) {
+        const pubHeader = document.createElement('div');
+        pubHeader.className = 'section-title-row';
+        pubHeader.style.marginTop = '20px';
+        pubHeader.innerHTML = '<h2 class="section-heading"><span class="section-dot"></span>Public Playlists</h2>';
+        area.appendChild(pubHeader);
+        renderPlaylistGrid(pub, area);
+    }
+
+    if (!mine.length && !pub.length) {
+        area.innerHTML += '<div class="dl-empty"><i class="fa-solid fa-list-music dl-empty-icon"></i>' +
+            '<p>No playlists yet.</p><p style="font-size:.8rem;color:#555;">Create your first playlist above.</p></div>';
+    }
+}
+
+function renderPlaylistGrid(playlists, area) {
+    const grid = document.createElement('div');
+    grid.className = 'pl-grid';
+    playlists.forEach(pl => {
+        const card = document.createElement('div');
+        card.className = 'pl-card';
+        const isOwner = auth.currentUser && pl.ownerId === auth.currentUser.uid;
+        const visIcon = pl.visibility === 'private' ? '<i class="fa-solid fa-lock pl-vis-icon"></i>' : '';
+        const artHtml = pl.coverArt
+            ? `<img src="${pl.coverArt}" class="pl-card-art">`
+            : `<div class="pl-card-art pl-card-art-fallback"><i class="fa-solid fa-music"></i></div>`;
+        card.innerHTML = `
+            ${artHtml}
+            <div class="pl-card-info">
+                <span class="pl-card-name">${escHtml(pl.name)}${visIcon}</span>
+                <span class="pl-card-meta">${pl.trackCount || 0} songs${isOwner ? '' : ' · ' + escHtml(pl.ownerName || 'Unknown')}</span>
+            </div>`;
+        card.addEventListener('click', () => openPlaylistView(pl));
+        grid.appendChild(card);
+    });
+    area.appendChild(grid);
+}
+
+// ── CREATE PLAYLIST MODAL ─────────────────────────────────────────────────────
+let createPlVisibility = 'public';
+
+function openCreatePlaylistModal() {
+    document.getElementById('cpl-name-input').value  = '';
+    document.getElementById('cpl-desc-input').value  = '';
+    document.getElementById('cpl-error').style.display = 'none';
+    createPlVisibility = 'public';
+    document.querySelectorAll('.pl-vis-btn').forEach(b => b.classList.toggle('active', b.getAttribute('data-vis') === 'public'));
+    document.getElementById('create-playlist-modal').style.display = 'flex';
+}
+document.getElementById('cpl-close-btn')?.addEventListener('click', () => {
+    document.getElementById('create-playlist-modal').style.display = 'none';
+});
+document.getElementById('create-playlist-modal')?.addEventListener('click', e => {
+    if (e.target === document.getElementById('create-playlist-modal'))
+        document.getElementById('create-playlist-modal').style.display = 'none';
+});
+document.querySelectorAll('.pl-vis-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+        createPlVisibility = btn.getAttribute('data-vis');
+        document.querySelectorAll('.pl-vis-btn').forEach(b => b.classList.toggle('active', b === btn));
+    });
+});
+document.getElementById('cpl-save-btn')?.addEventListener('click', async () => {
+    const name = document.getElementById('cpl-name-input').value.trim();
+    const desc = document.getElementById('cpl-desc-input').value.trim();
+    const errEl = document.getElementById('cpl-error');
+    if (!name) { errEl.textContent = 'Please enter a playlist name.'; errEl.style.display = 'block'; return; }
+    if (!auth.currentUser) { errEl.textContent = 'You must be signed in.'; errEl.style.display = 'block'; return; }
+    const btn = document.getElementById('cpl-save-btn');
+    btn.disabled = true; btn.textContent = 'Creating...';
+    try {
+        await db.collection('playlists').add({
+            name, description: desc,
+            visibility:  createPlVisibility,
+            ownerId:     auth.currentUser.uid,
+            ownerName:   auth.currentUser.displayName || 'User',
+            tracks:      [],
+            trackCount:  0,
+            coverArt:    '',
+            createdAt:   firebase.firestore.FieldValue.serverTimestamp()
+        });
+        document.getElementById('create-playlist-modal').style.display = 'none';
+        librarySubTab = 'playlists';
+        setActiveTab('library');
+    } catch (err) { errEl.textContent = 'Failed to create. Try again.'; errEl.style.display = 'block'; }
+    btn.disabled = false; btn.textContent = 'Create Playlist';
+});
+
+// ── ADD TO PLAYLIST MODAL ─────────────────────────────────────────────────────
+let addToPlaylistTrack = null;
+
+document.getElementById('opt-playlist-btn')?.addEventListener('click', () => {
+    addToPlaylistTrack = currentQueue[currentTrackIndex];
+    if (!addToPlaylistTrack) return;
+    document.getElementById('options-modal').style.display = 'none';
+    openAddToPlaylistModal();
+});
+
+async function openAddToPlaylistModal() {
+    document.getElementById('add-to-playlist-modal').style.display = 'flex';
+    const listEl = document.getElementById('apl-list');
+    listEl.innerHTML = '<p style="text-align:center;color:#555;padding:20px 0;">Loading...</p>';
+    const mine = await loadUserPlaylists();
+    listEl.innerHTML = '';
+    if (!mine.length) {
+        listEl.innerHTML = '<p style="text-align:center;color:#555;padding:20px;">No playlists yet. Create one first.</p>';
+        return;
+    }
+    mine.forEach(pl => {
+        const row = document.createElement('button');
+        row.className = 'apl-row';
+        const artHtml = pl.coverArt
+            ? `<img src="${pl.coverArt}" class="apl-art">`
+            : `<div class="apl-art apl-art-fallback"><i class="fa-solid fa-music"></i></div>`;
+        row.innerHTML = `${artHtml}<span class="apl-name">${escHtml(pl.name)}</span>`;
+        row.addEventListener('click', () => addTrackToPlaylist(pl));
+        listEl.appendChild(row);
+    });
+}
+document.getElementById('apl-close-btn')?.addEventListener('click', () => {
+    document.getElementById('add-to-playlist-modal').style.display = 'none';
+});
+document.getElementById('apl-new-btn')?.addEventListener('click', () => {
+    document.getElementById('add-to-playlist-modal').style.display = 'none';
+    openCreatePlaylistModal();
+});
+
+async function addTrackToPlaylist(pl) {
+    if (!addToPlaylistTrack) return;
+    document.getElementById('add-to-playlist-modal').style.display = 'none';
+    try {
+        const tracks = pl.tracks || [];
+        if (tracks.includes(addToPlaylistTrack.id)) { showDlToast('Already in "' + pl.name + '"'); return; }
+        tracks.push(addToPlaylistTrack.id);
+        // Use cover art of first track if playlist has none
+        const coverArt = pl.coverArt || addToPlaylistTrack.coverArt || '';
+        await db.collection('playlists').doc(pl.id).update({
+            tracks, trackCount: tracks.length, coverArt
+        });
+        showDlToast('Added to "' + pl.name + '"');
+    } catch { showDlToast('Failed to add. Try again.'); }
+}
+
+// ── PLAYLIST VIEW PAGE ─────────────────────────────────────────────────────────
+async function openPlaylistView(pl) {
+    const page = document.getElementById('playlist-view-page');
+    document.getElementById('plv-title').textContent = pl.name;
+    const isOwner = auth.currentUser && pl.ownerId === auth.currentUser.uid;
+    const visText = pl.visibility === 'private' ? '🔒 Private' : '🌐 Public';
+    document.getElementById('plv-meta').innerHTML =
+        `<div class="plv-meta-inner">
+            <span>${visText} · ${pl.trackCount || 0} songs</span>
+            ${pl.description ? '<p>' + escHtml(pl.description) + '</p>' : ''}
+        </div>`;
+
+    // Load track objects
+    const trackIds = pl.tracks || [];
+    const trackObjs = trackIds.map(id => allTracks.find(t => t.id === id)).filter(Boolean);
+    const listEl = document.getElementById('plv-track-list');
+    listEl.innerHTML = '';
+    if (trackObjs.length) {
+        renderTrackItems(trackObjs, listEl, trackObjs);
+    } else {
+        listEl.innerHTML = '<p style="text-align:center;color:#555;padding:30px 0;">This playlist is empty.</p>';
+    }
+
+    // Menu button — delete if owner
+    const menuBtn = document.getElementById('plv-menu-btn');
+    menuBtn.onclick = () => {
+        if (!isOwner) return;
+        if (confirm('Delete playlist "' + pl.name + '"?')) {
+            db.collection('playlists').doc(pl.id).delete().then(() => {
+                closePlaylistView();
+                showDlToast('Playlist deleted');
+                librarySubTab = 'playlists';
+                setActiveTab('library');
+            });
+        }
+    };
+    menuBtn.style.display = isOwner ? 'block' : 'none';
+
+    page.style.display = 'flex';
+    requestAnimationFrame(() => page.classList.add('legal-open'));
+    pushBackStack('playlist-view', closePlaylistView);
+}
+
+function closePlaylistView() {
+    const page = document.getElementById('playlist-view-page');
+    page.classList.remove('legal-open');
+    setTimeout(() => { page.style.display = 'none'; }, 300);
+    PAGE_STACK.filter((_, i, arr) => arr.length - 1 === i && arr[i].name === 'playlist-view')
+              .forEach(() => PAGE_STACK.pop());
+}
+document.getElementById('plv-back-btn')?.addEventListener('click', closePlaylistView);
 document.getElementById('opt-share-btn').addEventListener('click', () => {
     const track = currentQueue[currentTrackIndex];
     if (!track) return;
