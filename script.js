@@ -1531,8 +1531,21 @@ function renderQueueUI() {
 async function fetchLyrics(title, artist) {
     viewLyrics.innerHTML = '<p class="lyrics-msg">Searching for lyrics...</p>';
 
-    // 1. Check if admin has manually added lyrics in Firestore
     const currentTrack = currentQueue[currentTrackIndex];
+
+    // 1. Malayalam song — show Thirunabi Madh redirect chip
+    if (currentTrack && getCategory(currentTrack) === 'malayalam') {
+        const redirectUrl = currentTrack.lyricsRedirectUrl || '';
+        viewLyrics.innerHTML = buildThirunabiChip(redirectUrl);
+        // Wire click after inserting into DOM
+        const chip = viewLyrics.querySelector('.thirunabi-chip');
+        if (chip && redirectUrl) {
+            chip.addEventListener('click', () => window.open(redirectUrl, '_blank', 'noopener'));
+        }
+        return;
+    }
+
+    // 2. Admin manually added lyrics — show them
     if (currentTrack?.lyrics && currentTrack.lyrics.trim()) {
         const providerHtml = currentTrack.lyricsProvider
             ? buildProviderBadge(currentTrack.lyricsProvider, currentTrack.lyricsProviderUrl)
@@ -1543,7 +1556,7 @@ async function fetchLyrics(title, artist) {
         return;
     }
 
-    // 2. Fall back to LRCLib auto-fetch
+    // 3. Fall back to LRCLib auto-fetch
     try {
         const res  = await fetch(`https://lrclib.net/api/get?artist_name=${encodeURIComponent(artist)}&track_name=${encodeURIComponent(title)}`);
         if (!res.ok) throw new Error();
@@ -1558,6 +1571,32 @@ async function fetchLyrics(title, artist) {
     } catch {
         viewLyrics.innerHTML = '<p class="lyrics-msg">Lyrics not available for this track.</p>';
     }
+}
+
+function buildThirunabiChip(url) {
+    const hasUrl   = !!url;
+    const tag      = hasUrl ? 'button' : 'div';
+    const clickable = hasUrl ? 'thirunabi-chip thirunabi-chip-active' : 'thirunabi-chip';
+    const arrowHtml = hasUrl
+        ? '<i class="fa-solid fa-arrow-up-right-from-square tc-client-arrow"></i>'
+        : '';
+    return `
+        <div class="thirunabi-chip-wrapper">
+            <${tag} class="${clickable}">
+                <div class="tc-client-icon">
+                    <i class="fa-solid fa-mosque"></i>
+                </div>
+                <div class="tc-client-text">
+                    <span class="tc-client-title">Thirunabi Madh</span>
+                    <span class="tc-client-desc">${hasUrl
+                        ? 'Tap to open lyrics in Thirunabi Madh'
+                        : 'Lyrics available on Thirunabi Madh app'
+                    }</span>
+                </div>
+                ${arrowHtml}
+            </${tag}>
+            <p class="tc-client-note">Malayalam lyrics are provided by our partner app</p>
+        </div>`;
 }
 
 function buildProviderBadge(name, url) {
