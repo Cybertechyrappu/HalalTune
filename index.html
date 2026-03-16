@@ -95,38 +95,18 @@
 
         <main class="yt-main-content">
 
-            <!-- Top Bar — YT Music style -->
+            <!-- Top Bar — logo left, search right only -->
             <header class="yt-topbar">
-                <!-- Left: Logo + brand name (always visible) -->
                 <div class="topbar-brand">
                     <img src="icon.png" alt="Logo" class="filtered-icon topbar-logo">
                     <span class="topbar-brand-name">HalalTune</span>
                 </div>
-
-                <!-- Right side -->
                 <div class="topbar-right">
-                    <!-- Profile avatar button -->
-                    <button id="profile-btn" class="topbar-profile-btn" aria-label="Account">
-                        <div class="topbar-avatar" id="topbar-avatar">
-                            <i class="fa-solid fa-user"></i>
-                        </div>
-                    </button>
-                    <!-- Search icon button — opens full-screen search overlay -->
                     <button id="search-open-btn" class="topbar-search-icon-btn" aria-label="Search">
                         <i class="fa-solid fa-magnifying-glass"></i>
                     </button>
                 </div>
             </header>
-
-            <!-- Liquid Glass Bubble Nav -->
-            <div class="liquid-nav-container">
-                <div class="liquid-nav" id="liquid-nav">
-                    <div class="liquid-nav-bubble" id="liquid-bubble"></div>
-                    <button class="liquid-nav-btn active" data-tab="all">Home</button>
-                    <button class="liquid-nav-btn" data-tab="playlist">Playlist</button>
-                    <button class="liquid-nav-btn" data-tab="liked">Liked Songs</button>
-                </div>
-            </div>
 
             <!-- Content Area -->
             <div class="yt-content-area" id="content-area">
@@ -137,11 +117,29 @@
         </main>
     </div>
 
+    <!-- BOTTOM NAVIGATION BAR -->
+    <nav class="bottom-nav" id="bottom-nav">
+        <div class="bn-bubble" id="bn-bubble"></div>
+        <button class="bn-btn active" data-tab="all" id="bn-home">
+            <i class="fa-solid fa-house"></i>
+            <span>Home</span>
+        </button>
+        <button class="bn-btn" data-tab="categories" id="bn-categories">
+            <i class="fa-solid fa-layer-group"></i>
+            <span>Categories</span>
+        </button>
+        <button class="bn-btn" data-tab="library" id="bn-library">
+            <i class="fa-solid fa-book-open"></i>
+            <span>Library</span>
+        </button>
+        <button class="bn-btn" id="bn-account">
+            <div class="bn-avatar" id="bn-avatar"><i class="fa-solid fa-user"></i></div>
+            <span>Account</span>
+        </button>
+    </nav>
+
     <!-- MINI PLAYER -->
     <footer class="yt-bottom-player" id="mini-player">
-        <div class="yt-player-progress-container">
-            <input type="range" id="progress-bar" class="yt-slider" value="0" max="100">
-        </div>
         <div class="yt-player-content">
             <div class="yt-player-info">
                 <div class="yt-player-art" id="player-art"><i class="fa-solid fa-music"></i></div>
@@ -155,6 +153,9 @@
                 <button id="play-btn" class="yt-ctrl-play"><i class="fa-solid fa-play"></i></button>
                 <button id="desk-next-btn" class="yt-ctrl-btn"><i class="fa-solid fa-forward-step"></i></button>
             </div>
+        </div>
+        <div class="yt-player-progress-container">
+            <input type="range" id="progress-bar" class="yt-slider" value="0" max="100">
         </div>
     </footer>
 
@@ -205,11 +206,20 @@
     <!-- OPTIONS MODAL -->
     <div id="options-modal" class="options-overlay" style="display:none;">
         <div class="options-content">
-            <button id="opt-download-btn"><i class="fa-solid fa-download"></i> Download Track</button>
+            <button id="opt-download-btn">
+                <i class="fa-solid fa-arrow-down-to-line"></i>
+                <span id="opt-download-label">Download for offline</span>
+            </button>
+            <button id="opt-playlist-btn">
+                <i class="fa-solid fa-list-ul"></i> Add to Playlist
+            </button>
             <button id="opt-share-btn"><i class="fa-solid fa-share-nodes"></i> Share Track</button>
             <button id="opt-close-btn" style="color:#ff4d4d;"><i class="fa-solid fa-xmark"></i> Cancel</button>
         </div>
     </div>
+
+    <!-- DOWNLOADS NOTIFICATION TOAST -->
+    <div id="dl-toast" class="dl-toast" style="display:none;"></div>
 
     <audio id="audio-element" src=""></audio>
 
@@ -391,6 +401,62 @@
         <div id="search-overlay-body" class="search-overlay-body">
             <!-- filled by JS -->
         </div>
+    </div>
+
+    <!-- CREATE PLAYLIST MODAL -->
+    <div id="create-playlist-modal" class="modal-pl-overlay" style="display:none;">
+        <div class="modal-pl-sheet">
+            <div class="modal-pl-header">
+                <h3>New Playlist</h3>
+                <button id="cpl-close-btn" class="modal-pl-close"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="modal-pl-body">
+                <input type="text" id="cpl-name-input" class="pl-input" placeholder="Playlist name" maxlength="60">
+                <textarea id="cpl-desc-input" class="pl-input pl-textarea" placeholder="Description (optional)" maxlength="200" rows="2"></textarea>
+                <div class="pl-visibility-row">
+                    <span class="pl-vis-label">Visibility</span>
+                    <div class="pl-vis-toggle">
+                        <button class="pl-vis-btn active" data-vis="public">
+                            <i class="fa-solid fa-earth-asia"></i> Public
+                        </button>
+                        <button class="pl-vis-btn" data-vis="private">
+                            <i class="fa-solid fa-lock"></i> Private
+                        </button>
+                    </div>
+                </div>
+                <p id="cpl-error" class="pl-error" style="display:none;"></p>
+                <button id="cpl-save-btn" class="yt-primary-btn" style="margin-top:14px;">Create Playlist</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ADD TO PLAYLIST MODAL -->
+    <div id="add-to-playlist-modal" class="modal-pl-overlay" style="display:none;">
+        <div class="modal-pl-sheet">
+            <div class="modal-pl-header">
+                <h3>Add to Playlist</h3>
+                <button id="apl-close-btn" class="modal-pl-close"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div id="apl-list" class="apl-list">
+                <p style="text-align:center;color:#555;padding:20px 0;">Loading playlists...</p>
+            </div>
+            <button id="apl-new-btn" class="apl-new-btn">
+                <i class="fa-solid fa-plus"></i> New playlist
+            </button>
+        </div>
+    </div>
+
+    <!-- PLAYLIST VIEW PAGE (slide in from right) -->
+    <div id="playlist-view-page" class="legal-page" style="display:none;">
+        <div class="legal-header">
+            <button class="legal-back-btn" id="plv-back-btn"><i class="fa-solid fa-arrow-left"></i></button>
+            <h2 id="plv-title">Playlist</h2>
+            <button id="plv-menu-btn" class="legal-back-btn" style="margin-left:auto;">
+                <i class="fa-solid fa-ellipsis-vertical"></i>
+            </button>
+        </div>
+        <div id="plv-meta" class="plv-meta"></div>
+        <div id="plv-track-list" class="yt-track-list" style="padding:0 14px 80px;"></div>
     </div>
 
     <!-- iOS Install Banner -->
