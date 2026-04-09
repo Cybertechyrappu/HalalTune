@@ -1,0 +1,8 @@
+{
+  "name": "halaltune",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "youtubei.js": "^17.0.0"
+  }
+}
